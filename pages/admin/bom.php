@@ -94,7 +94,7 @@ $materials = $db->query("
                         <div class="card-header d-flex justify-content-between align-items-center">
                             <h5><i class="fas fa-list-alt me-2"></i>รายการสินค้าและ BOM</h5>
                             <div>
-                                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createBOMModal">
+                                <button class="btn btn-primary" onclick="showCreateBOMModal()">
                                     <i class="fas fa-plus me-1"></i>สร้าง BOM ใหม่
                                 </button>
                             </div>
@@ -138,7 +138,7 @@ $materials = $db->query("
                                                             <i class="fas fa-edit"></i> แก้ไข
                                                         </button>
                                                     <?php else: ?>
-                                                        <button class="btn btn-primary btn-sm w-100" onclick="event.stopPropagation(); createBOMForProduct(<?= $product['product_id'] ?>, '<?= htmlspecialchars($product['product_name']) ?>')">
+                                                        <button class="btn btn-primary btn-sm w-100" onclick="event.stopPropagation(); createBOMForProduct(<?= $product['product_id'] ?>, '<?= htmlspecialchars($product['product_name']) ?>', '<?= htmlspecialchars($product['product_code']) ?>')">
                                                             <i class="fas fa-plus"></i> สร้าง BOM
                                                         </button>
                                                     <?php endif; ?>
@@ -172,13 +172,29 @@ $materials = $db->query("
                         <input type="hidden" id="product_id" name="product_id">
                         
                         <div class="row mb-4">
-                            <div class="col-md-8">
-                                <h6>สินค้า: <span id="product_name_display" class="text-primary"></span></h6>
+                            <div class="col-md-4">
+                                <label class="form-label">ชื่อสินค้า <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="product_name_input" 
+                                       name="product_name" placeholder="เช่น: กล่องกระดาษ A4" required>
+                                <small class="text-muted">กรอกชื่อสินค้าที่ต้องการสร้าง BOM</small>
                             </div>
-                            <div class="col-md-4 text-end">
+                            <div class="col-md-4">
+                                <label class="form-label">รหัสสินค้า <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="product_code_input" 
+                                       name="product_code" placeholder="เช่น: PROD-001" required>
+                                <small class="text-muted">กรอกรหัสสินค้า</small>
+                            </div>
+                            <div class="col-md-4">
                                 <label class="form-label">เวอร์ชัน BOM</label>
                                 <input type="text" class="form-control" id="bom_version" name="version" value="1.0" required>
+                                <small class="text-muted">เช่น: 1.0, 1.1, 2.0</small>
                             </div>
+                        </div>
+                        
+                        <!-- Product Info Display -->
+                        <div id="selected_product_info" class="alert alert-info" style="display: none;">
+                            <i class="fas fa-info-circle me-2"></i>
+                            กำลังสร้าง BOM สำหรับ: <strong id="display_product_name"></strong> (<span id="display_product_code"></span>)
                         </div>
                         
                         <hr>
@@ -292,17 +308,44 @@ $materials = $db->query("
         let currentProductId = null;
         let currentBomId = null;
         
-        function createBOMForProduct(productId, productName) {
+        function showCreateBOMModal() {
+            currentProductId = null;
+            currentBomId = null;
+            bomMaterials = [];
+            
+            document.getElementById('bomModalTitle').textContent = 'สร้าง BOM ใหม่';
+            document.getElementById('bomForm').reset();
+            document.getElementById('product_name_input').readOnly = false;
+            document.getElementById('product_code_input').readOnly = false;
+            document.getElementById('bom_version').value = '1.0';
+            document.getElementById('materials-list').innerHTML = '';
+            document.getElementById('selected_product_info').style.display = 'none';
+            
+            updateMaterialsList();
+            new bootstrap.Modal(document.getElementById('bomModal')).show();
+        }
+        
+        function createBOMForProduct(productId, productName, productCode) {
             currentProductId = productId;
             currentBomId = null;
             bomMaterials = [];
             
             document.getElementById('bomModalTitle').textContent = 'สร้าง BOM ใหม่';
             document.getElementById('product_id').value = productId;
-            document.getElementById('product_name_display').textContent = productName;
+            document.getElementById('product_name_input').value = productName;
+            document.getElementById('product_code_input').value = productCode;
             document.getElementById('bom_version').value = '1.0';
-            document.getElementById('materials-list').innerHTML = '';
             
+            // แสดง info banner
+            document.getElementById('display_product_name').textContent = productName;
+            document.getElementById('display_product_code').textContent = productCode;
+            document.getElementById('selected_product_info').style.display = 'block';
+            
+            // ล็อคช่องกรอกชื่อและรหัส
+            document.getElementById('product_name_input').readOnly = true;
+            document.getElementById('product_code_input').readOnly = true;
+            
+            document.getElementById('materials-list').innerHTML = '';
             updateMaterialsList();
             new bootstrap.Modal(document.getElementById('bomModal')).show();
         }
@@ -439,9 +482,21 @@ $materials = $db->query("
                 return;
             }
             
+            const productName = document.getElementById('product_name_input').value.trim();
+            const productCode = document.getElementById('product_code_input').value.trim();
+            
+            if (!productName || !productCode) {
+                Swal.fire('กรุณากรอกข้อมูลสินค้า', 'ต้องระบุชื่อและรหัสสินค้า', 'warning');
+                return;
+            }
+            
             const formData = new FormData(this);
             formData.append('action', currentBomId ? 'update' : 'create');
             formData.append('materials', JSON.stringify(bomMaterials));
+            
+            if (currentProductId) {
+                formData.append('product_id', currentProductId);
+            }
             
             if (currentBomId) {
                 formData.append('bom_id', currentBomId);
@@ -577,11 +632,16 @@ $materials = $db->query("
                         
                         document.getElementById('bomModalTitle').textContent = 'แก้ไข BOM';
                         document.getElementById('product_id').value = bom.product_id;
-                        document.getElementById('product_name_display').textContent = bom.product_name;
+                        document.getElementById('product_name_input').value = bom.product_name;
+                        document.getElementById('product_code_input').value = bom.product_code;
                         document.getElementById('bom_version').value = bom.version;
                         document.getElementById('bom_id').value = bom.bom_id;
                         
-                        // Load materials
+                        // ล็อคช่องกรอก
+                        document.getElementById('product_name_input').readOnly = true;
+                        document.getElementById('product_code_input').readOnly = true;
+                        
+                        // โหลดวัสดุ
                         bomMaterials = bom.details.map(detail => ({
                             material_id: detail.material_id,
                             part_code: detail.part_code,
