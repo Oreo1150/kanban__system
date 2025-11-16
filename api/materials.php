@@ -1,5 +1,5 @@
 <?php
-// api/materials.php
+// api/materials.php - Final version with part_code_active support
 require_once '../config/config.php';
 require_once '../config/database.php';
 
@@ -37,6 +37,24 @@ try {
             $material['current_stock'] = (int)$material['current_stock'];
             $material['min_stock'] = (int)$material['min_stock'];
             $material['max_stock'] = (int)$material['max_stock'];
+            
+            echo json_encode(['success' => true, 'material' => $material]);
+            break;
+            
+        case 'get_by_id':
+            $id = (int)($_GET['id'] ?? 0);
+            if ($id <= 0) {
+                throw new Exception('รหัสวัสดุไม่ถูกต้อง');
+            }
+            
+            $query = "SELECT * FROM materials WHERE material_id = ? AND status = 'active'";
+            $stmt = $db->prepare($query);
+            $stmt->execute([$id]);
+            $material = $stmt->fetch();
+            
+            if (!$material) {
+                throw new Exception('ไม่พบวัสดุ');
+            }
             
             echo json_encode(['success' => true, 'material' => $material]);
             break;
@@ -109,8 +127,9 @@ try {
                 throw new Exception('กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน');
             }
             
-            // Check if part_code already exists
-            $checkQuery = "SELECT material_id FROM materials WHERE part_code = ?";
+            // Check if part_code already exists (only active materials)
+            // The UNIQUE constraint on part_code_active will handle this automatically
+            $checkQuery = "SELECT material_id FROM materials WHERE part_code = ? AND status = 'active'";
             $checkStmt = $db->prepare($checkQuery);
             $checkStmt->execute([$data['part_code']]);
             if ($checkStmt->rowCount() > 0) {
@@ -121,8 +140,9 @@ try {
             $qr_data = json_encode(['part_code' => $data['part_code'], 'type' => 'material']);
             $data['qr_code'] = $qr_data;
             
-            $query = "INSERT INTO materials (part_code, material_name, description, unit, min_stock, max_stock, current_stock, location, qr_code) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            // Insert - trigger will automatically set part_code_active
+            $query = "INSERT INTO materials (part_code, material_name, description, unit, min_stock, max_stock, current_stock, location, qr_code, status) 
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')";
             $stmt = $db->prepare($query);
             $stmt->execute([
                 $data['part_code'], $data['material_name'], $data['description'], 
@@ -161,6 +181,7 @@ try {
                 throw new Exception('ไม่พบวัสดุที่ต้องการแก้ไข');
             }
             
+            // Update - trigger will handle part_code_active if status changes
             $query = "UPDATE materials SET material_name = ?, description = ?, unit = ?, min_stock = ?, max_stock = ?, location = ? WHERE material_id = ?";
             $stmt = $db->prepare($query);
             $stmt->execute([
@@ -189,7 +210,7 @@ try {
                 throw new Exception('ไม่พบวัสดุที่ต้องการลบ');
             }
             
-            // Soft delete
+            // Soft delete - trigger will automatically set part_code_active to NULL
             $query = "UPDATE materials SET status = 'inactive' WHERE material_id = ?";
             $stmt = $db->prepare($query);
             $stmt->execute([$material_id]);
@@ -198,6 +219,44 @@ try {
             logAudit($db, $_SESSION['user_id'], 'delete', 'materials', $material_id, $oldData, ['status' => 'inactive']);
             
             echo json_encode(['success' => true, 'message' => 'ลบวัสดุสำเร็จ']);
+            break;
+            
+        case 'restore':
+            checkRole(['admin']);
+            
+            $material_id = (int)$_POST['material_id'];
+            
+            // Get material data
+            $oldQuery = "SELECT * FROM materials WHERE material_id = ? AND status = 'inactive'";
+            $oldStmt = $db->prepare($oldQuery);
+            $oldStmt->execute([$material_id]);
+            $material = $oldStmt->fetch();
+            
+            if (!$material) {
+                throw new Exception('ไม่พบวัสดุที่ต้องการกู้คืน');
+            }
+            
+            // Check if part_code is available
+            $checkQuery = "SELECT material_id FROM materials WHERE part_code = ? AND status = 'active'";
+            $checkStmt = $db->prepare($checkQuery);
+            $checkStmt->execute([$material['part_code']]);
+            
+            if ($checkStmt->rowCount() > 0) {
+                throw new Exception('ไม่สามารถกู้คืนได้ เนื่องจากมีวัสดุรหัส ' . $material['part_code'] . ' อยู่แล้ว');
+            }
+            
+            // Restore - trigger will automatically set part_code_active
+            $query = "UPDATE materials SET status = 'active' WHERE material_id = ?";
+            $stmt = $db->prepare($query);
+            $stmt->execute([$material_id]);
+            
+            // Log audit
+            logAudit($db, $_SESSION['user_id'], 'restore', 'materials', $material_id, 
+                ['status' => 'inactive'], 
+                ['status' => 'active']
+            );
+            
+            echo json_encode(['success' => true, 'message' => 'กู้คืนวัสดุสำเร็จ']);
             break;
             
         default:

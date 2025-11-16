@@ -1,6 +1,6 @@
 <?php
 // pages/admin/dashboard.php
-$page_title = 'แดshบอร์ดผู้ดูแลระบบ';
+$page_title = 'แดรชบอร์ดผู้ดูแลระบบ';
 $breadcrumbs = [
     ['text' => 'หน้าแรก', 'url' => 'dashboard.php'],
     ['text' => 'แดshบอร์ด']

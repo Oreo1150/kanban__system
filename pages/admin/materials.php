@@ -1,5 +1,5 @@
 <?php
-// pages/admin/materials.php
+// pages/admin/materials.php - Fixed version
 $page_title = 'จัดการวัสดุและสต็อก';
 $breadcrumbs = [
     ['text' => 'หน้าแรก', 'url' => 'dashboard.php'],
@@ -170,6 +170,7 @@ $stats = $db->query("
                                         <option value="kg">กิโลกรัม (kg)</option>
                                         <option value="m">เมตร (m)</option>
                                         <option value="sheet">แผ่น (sheet)</option>
+                                        <option value="roll">ม้วน (roll)</option>
                                     </select>
                                 </div>
                             </div>
@@ -198,9 +199,6 @@ $stats = $db->query("
                                 <div class="mb-3">
                                     <label for="min_stock" class="form-label">
                                         สต็อกต่ำสุด <span class="text-danger">*</span>
-                                        <i class="fas fa-info-circle text-info" 
-                                           data-bs-toggle="tooltip" 
-                                           title="แนะนำ: 50,000 ชิ้น"></i>
                                     </label>
                                     <input type="number" class="form-control" id="min_stock" name="min_stock" value="50000" min="0" required>
                                 </div>
@@ -209,9 +207,6 @@ $stats = $db->query("
                                 <div class="mb-3">
                                     <label for="max_stock" class="form-label">
                                         สต็อกสูงสุด <span class="text-danger">*</span>
-                                        <i class="fas fa-info-circle text-info" 
-                                           data-bs-toggle="tooltip" 
-                                           title="แนะนำ: 100,000 ชิ้น"></i>
                                     </label>
                                     <input type="number" class="form-control" id="max_stock" name="max_stock" value="100000" min="0" required>
                                 </div>
@@ -234,6 +229,29 @@ $stats = $db->query("
         </div>
     </div>
 
+    <!-- View Material Modal -->
+    <div class="modal fade" id="viewMaterialModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-eye me-2"></i>รายละเอียดวัสดุ
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="materialDetailsContent">
+                    <!-- Content will be loaded here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
+                    <button type="button" class="btn btn-warning" id="editFromViewBtn">
+                        <i class="fas fa-edit me-1"></i>แก้ไข
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
@@ -242,15 +260,10 @@ $stats = $db->query("
 
     <script>
         let materialsTable;
+        let currentViewMaterialId = null;
         
         $(document).ready(function() {
             initDataTable();
-            
-            // Initialize tooltips
-            var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-            var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
-                return new bootstrap.Tooltip(tooltipTriggerEl);
-            });
         });
         
         function initDataTable() {
@@ -321,16 +334,13 @@ $stats = $db->query("
                         render: function(data) {
                             return `
                                 <div class="btn-group" role="group">
-                                    <button class="btn btn-info btn-sm" onclick="viewMaterial(${data.material_id})" 
-                                            data-bs-toggle="tooltip" title="ดูรายละเอียด">
+                                    <button class="btn btn-info btn-sm" onclick="viewMaterial(${data.material_id})" title="ดูรายละเอียด">
                                         <i class="fas fa-eye"></i>
                                     </button>
-                                    <button class="btn btn-warning btn-sm" onclick="editMaterial(${data.material_id})"
-                                            data-bs-toggle="tooltip" title="แก้ไข">
+                                    <button class="btn btn-warning btn-sm" onclick="editMaterial(${data.material_id})" title="แก้ไข">
                                         <i class="fas fa-edit"></i>
                                     </button>
-                                    <button class="btn btn-danger btn-sm" onclick="deleteMaterial(${data.material_id})"
-                                            data-bs-toggle="tooltip" title="ลบ">
+                                    <button class="btn btn-danger btn-sm" onclick="deleteMaterial(${data.material_id})" title="ลบ">
                                         <i class="fas fa-trash"></i>
                                     </button>
                                 </div>
@@ -342,7 +352,11 @@ $stats = $db->query("
                 language: {
                     url: '//cdn.datatables.net/plug-ins/1.11.5/i18n/th.json'
                 },
-                pageLength: 25
+                pageLength: 25,
+                drawCallback: function() {
+                    // Re-initialize tooltips after table draw
+                    $('[title]').tooltip();
+                }
             });
         }
         
@@ -353,7 +367,126 @@ $stats = $db->query("
             document.getElementById('min_stock').value = '50000';
             document.getElementById('max_stock').value = '100000';
             document.getElementById('current_stock').value = '0';
+            document.getElementById('part_code').readOnly = false;
             new bootstrap.Modal(document.getElementById('materialModal')).show();
+        }
+        
+        // **FIX: Add viewMaterial function**
+        function viewMaterial(materialId) {
+            currentViewMaterialId = materialId;
+            
+            fetch(`../../api/materials.php?action=get_by_id&id=${materialId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        displayMaterialDetails(data.material);
+                        new bootstrap.Modal(document.getElementById('viewMaterialModal')).show();
+                    } else {
+                        Swal.fire('เกิดข้อผิดพลาด', data.message, 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถโหลดข้อมูลได้', 'error');
+                });
+        }
+        
+        function displayMaterialDetails(material) {
+            let stockStatus, stockColor;
+            if (material.current_stock < material.min_stock) {
+                stockStatus = 'สต็อกต่ำ';
+                stockColor = 'danger';
+            } else if (material.current_stock > material.max_stock) {
+                stockStatus = 'สต็อกเกิน';
+                stockColor = 'warning';
+            } else {
+                stockStatus = 'ปกติ';
+                stockColor = 'success';
+            }
+            
+            const percentage = (material.current_stock / material.max_stock) * 100;
+            
+            const html = `
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>รหัสวัสดุ:</h6>
+                        <p class="text-primary"><strong>${material.part_code}</strong></p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>สถานะสต็อก:</h6>
+                        <p><span class="badge bg-${stockColor}">${stockStatus}</span></p>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-12">
+                        <h6>ชื่อวัสดุ:</h6>
+                        <p>${material.material_name}</p>
+                    </div>
+                </div>
+                
+                ${material.description ? `
+                <div class="row">
+                    <div class="col-md-12">
+                        <h6>รายละเอียด:</h6>
+                        <p>${material.description}</p>
+                    </div>
+                </div>
+                ` : ''}
+                
+                <hr>
+                
+                <div class="row">
+                    <div class="col-md-3">
+                        <h6>สต็อกปัจจุบัน:</h6>
+                        <p class="text-${stockColor}"><strong>${material.current_stock.toLocaleString()}</strong> ${material.unit}</p>
+                    </div>
+                    <div class="col-md-3">
+                        <h6>สต็อกต่ำสุด:</h6>
+                        <p>${material.min_stock.toLocaleString()} ${material.unit}</p>
+                    </div>
+                    <div class="col-md-3">
+                        <h6>สต็อกสูงสุด:</h6>
+                        <p>${material.max_stock.toLocaleString()} ${material.unit}</p>
+                    </div>
+                    <div class="col-md-3">
+                        <h6>หน่วย:</h6>
+                        <p>${material.unit}</p>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-12">
+                        <h6>ระดับสต็อก:</h6>
+                        <div class="progress" style="height: 25px;">
+                            <div class="progress-bar bg-${stockColor}" style="width: ${percentage}%">
+                                ${percentage.toFixed(1)}%
+                            </div>
+                        </div>
+                        <small class="text-muted">
+                            ${material.current_stock.toLocaleString()} / ${material.max_stock.toLocaleString()} ${material.unit}
+                        </small>
+                    </div>
+                </div>
+                
+                ${material.location ? `
+                <hr>
+                <div class="row">
+                    <div class="col-md-12">
+                        <h6>ที่เก็บ:</h6>
+                        <p><i class="fas fa-map-marker-alt text-danger"></i> ${material.location}</p>
+                    </div>
+                </div>
+                ` : ''}
+            `;
+            
+            document.getElementById('materialDetailsContent').innerHTML = html;
+            
+            // Setup edit button
+            document.getElementById('editFromViewBtn').onclick = () => {
+                bootstrap.Modal.getInstance(document.getElementById('viewMaterialModal')).hide();
+                editMaterial(currentViewMaterialId);
+            };
         }
         
         function editMaterial(materialId) {
@@ -377,9 +510,12 @@ $stats = $db->query("
                         document.getElementById('part_code').readOnly = true;
                         
                         new bootstrap.Modal(document.getElementById('materialModal')).show();
+                    } else {
+                        Swal.fire('เกิดข้อผิดพลาด', data.message, 'error');
                     }
                 })
                 .catch(error => {
+                    console.error('Error:', error);
                     Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถโหลดข้อมูลได้', 'error');
                 });
         }
@@ -443,6 +579,7 @@ $stats = $db->query("
                 }
             })
             .catch(error => {
+                console.error('Error:', error);
                 Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถบันทึกข้อมูลได้', 'error');
             });
         });
