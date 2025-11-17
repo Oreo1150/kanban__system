@@ -12,6 +12,7 @@ $menus = [
         'จัดการระบบ' => [
             ['icon' => 'fas fa-users', 'text' => 'จัดการผู้ใช้', 'url' => 'users.php'],
             ['icon' => 'fas fa-boxes', 'text' => 'จัดการวัสดุ', 'url' => 'materials.php'],
+            ['icon' => 'fas fa-ruler-combined', 'text' => 'จัดการหน่วยนับ', 'url' => 'units.php'],
             ['icon' => 'fas fa-list-alt', 'text' => 'จัดการ BOM', 'url' => 'bom.php'],
         ],
         'รายงาน' => [

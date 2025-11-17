@@ -1,5 +1,5 @@
 <?php
-// pages/admin/bom.php
+// pages/admin/bom.php - Complete version with delete feature
 $page_title = 'จัดการ BOM (Bill of Materials)';
 $breadcrumbs = [
     ['text' => 'หน้าแรก', 'url' => 'dashboard.php'],
@@ -103,7 +103,7 @@ $materials = $db->query("
                             <div class="row">
                                 <?php foreach ($products as $product): ?>
                                     <div class="col-lg-4 col-md-6 mb-4">
-                                        <div class="product-bom-card card h-100" onclick="viewBOM(<?= $product['product_id'] ?>)">
+                                        <div class="product-bom-card card h-100">
                                             <div class="card-body position-relative">
                                                 <?php if ($product['has_bom']): ?>
                                                     <span class="bom-badge badge bg-success">
@@ -115,7 +115,36 @@ $materials = $db->query("
                                                     </span>
                                                 <?php endif; ?>
                                                 
-                                                <div class="text-center mb-3">
+                                                <!-- เพิ่มปุ่มเมนู 3 จุด -->
+                                                <div class="position-absolute top-0 start-0 m-2">
+                                                    <div class="dropdown">
+                                                        <button class="btn btn-sm btn-light" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation()">
+                                                            <i class="fas fa-ellipsis-v"></i>
+                                                        </button>
+                                                        <ul class="dropdown-menu">
+                                                            <li>
+                                                                <a class="dropdown-item" href="#" onclick="event.preventDefault(); event.stopPropagation(); viewBOM(<?= $product['product_id'] ?>)">
+                                                                    <i class="fas fa-eye text-info me-2"></i>ดูรายละเอียด
+                                                                </a>
+                                                            </li>
+                                                            <?php if ($product['has_bom']): ?>
+                                                            <li>
+                                                                <a class="dropdown-item" href="#" onclick="event.preventDefault(); event.stopPropagation(); editBOM(<?= $product['product_id'] ?>)">
+                                                                    <i class="fas fa-edit text-warning me-2"></i>แก้ไข BOM
+                                                                </a>
+                                                            </li>
+                                                            <li><hr class="dropdown-divider"></li>
+                                                            <?php endif; ?>
+                                                            <li>
+                                                                <a class="dropdown-item text-danger" href="#" onclick="event.preventDefault(); event.stopPropagation(); deleteProduct(<?= $product['product_id'] ?>, '<?= htmlspecialchars($product['product_name'], ENT_QUOTES) ?>', <?= $product['has_bom'] ? 'true' : 'false' ?>)">
+                                                                    <i class="fas fa-trash me-2"></i>ลบสินค้า
+                                                                </a>
+                                                            </li>
+                                                        </ul>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div class="text-center mb-3" style="cursor: pointer;" onclick="viewBOM(<?= $product['product_id'] ?>)">
                                                     <i class="fas fa-cube fa-3x text-primary mb-3"></i>
                                                     <h6><?= htmlspecialchars($product['product_name']) ?></h6>
                                                     <small class="text-muted"><?= htmlspecialchars($product['product_code']) ?></small>
@@ -129,16 +158,19 @@ $materials = $db->query("
                                                 <?php endif; ?>
                                             </div>
                                             <div class="card-footer bg-transparent">
-                                                <div class="d-flex justify-content-between">
+                                                <div class="d-flex justify-content-between gap-2">
                                                     <?php if ($product['has_bom']): ?>
-                                                        <button class="btn btn-info btn-sm" onclick="event.stopPropagation(); viewBOM(<?= $product['product_id'] ?>)">
-                                                            <i class="fas fa-eye"></i> ดู BOM
+                                                        <button class="btn btn-info btn-sm flex-fill" onclick="event.stopPropagation(); viewBOM(<?= $product['product_id'] ?>)">
+                                                            <i class="fas fa-eye"></i> ดู
                                                         </button>
-                                                        <button class="btn btn-warning btn-sm" onclick="event.stopPropagation(); editBOM(<?= $product['product_id'] ?>)">
+                                                        <button class="btn btn-warning btn-sm flex-fill" onclick="event.stopPropagation(); editBOM(<?= $product['product_id'] ?>)">
                                                             <i class="fas fa-edit"></i> แก้ไข
                                                         </button>
+                                                        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); confirmDeleteBOM(<?= $product['product_id'] ?>, '<?= htmlspecialchars($product['product_name'], ENT_QUOTES) ?>')">
+                                                            <i class="fas fa-trash"></i>
+                                                        </button>
                                                     <?php else: ?>
-                                                        <button class="btn btn-primary btn-sm w-100" onclick="event.stopPropagation(); createBOMForProduct(<?= $product['product_id'] ?>, '<?= htmlspecialchars($product['product_name']) ?>', '<?= htmlspecialchars($product['product_code']) ?>')">
+                                                        <button class="btn btn-primary btn-sm w-100" onclick="event.stopPropagation(); createBOMForProduct(<?= $product['product_id'] ?>, '<?= htmlspecialchars($product['product_name'], ENT_QUOTES) ?>', '<?= htmlspecialchars($product['product_code'], ENT_QUOTES) ?>')">
                                                             <i class="fas fa-plus"></i> สร้าง BOM
                                                         </button>
                                                     <?php endif; ?>
@@ -617,7 +649,8 @@ $materials = $db->query("
             
             // Setup delete button
             document.getElementById('deleteBOMBtn').onclick = () => {
-                deleteBOM(bom.bom_id);
+                bootstrap.Modal.getInstance(document.getElementById('viewBOMModal')).hide();
+                confirmDeleteBOM(productId, bom.product_name);
             };
         }
         
@@ -660,41 +693,196 @@ $materials = $db->query("
                 });
         }
         
-        function deleteBOM(bomId) {
+        // ฟังก์ชันยืนยันการลบ BOM พร้อมแสดงรายละเอียด
+        function confirmDeleteBOM(productId, productName) {
+            // ดึง BOM ของสินค้านี้ก่อน
+            fetch(`../../api/bom.php?action=get_bom&product_id=${productId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.bom) {
+                        const materialCount = data.bom.details ? data.bom.details.length : 0;
+                        
+                        Swal.fire({
+                            title: 'ยืนยันการลบ BOM?',
+                            html: `
+                                <div class="text-start">
+                                    <p><strong>สินค้า:</strong> ${productName}</p>
+                                    <p><strong>เวอร์ชัน:</strong> ${data.bom.version}</p>
+                                    <p><strong>จำนวนวัสดุ:</strong> ${materialCount} รายการ</p>
+                                    <hr>
+                                    <div class="alert alert-warning">
+                                        <i class="fas fa-exclamation-triangle me-2"></i>
+                                        <strong>คำเตือน:</strong> การลบ BOM จะทำให้:
+                                        <ul class="mb-0 mt-2">
+                                            <li>ไม่สามารถคำนวณวัสดุอัตโนมัติสำหรับสินค้านี้ได้</li>
+                                            <li>ต้องสร้าง BOM ใหม่ถ้าต้องการใช้งานอีกครั้ง</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            `,
+                            icon: 'warning',
+                            showCancelButton: true,
+                            confirmButtonColor: '#dc3545',
+                            cancelButtonColor: '#6c757d',
+                            confirmButtonText: '<i class="fas fa-trash me-1"></i>ยืนยันการลบ',
+                            cancelButtonText: 'ยกเลิก',
+                            width: '600px'
+                        }).then((result) => {
+                            if (result.isConfirmed) {
+                                performDeleteBOM(data.bom.bom_id, productName);
+                            }
+                        });
+                    } else {
+                        Swal.fire('ไม่พบ BOM', 'ไม่พบ BOM ของสินค้านี้', 'info');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถโหลดข้อมูล BOM ได้', 'error');
+                });
+        }
+        
+        // ฟังก์ชันลบ BOM
+        function performDeleteBOM(bomId, productName) {
+            const formData = new FormData();
+            formData.append('action', 'delete');
+            formData.append('bom_id', bomId);
+            
             Swal.fire({
-                title: 'ยืนยันการลบ?',
-                text: 'การลบ BOM จะทำให้ไม่สามารถคำนวณวัสดุอัตโนมัติได้',
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonColor: '#dc3545',
-                cancelButtonColor: '#6c757d',
-                confirmButtonText: 'ลบ BOM',
-                cancelButtonText: 'ยกเลิก'
-            }).then((result) => {
-                if (result.isConfirmed) {
-                    const formData = new FormData();
-                    formData.append('action', 'delete');
-                    formData.append('bom_id', bomId);
-                    
-                    fetch('../../api/bom.php', {
-                        method: 'POST',
-                        body: formData
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            Swal.fire('สำเร็จ', 'ลบ BOM เรียบร้อยแล้ว', 'success').then(() => {
-                                location.reload();
-                            });
-                        } else {
-                            Swal.fire('เกิดข้อผิดพลาด', data.message, 'error');
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error:', error);
-                        Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถลบข้อมูลได้', 'error');
-                    });
+                title: 'กำลังลบ BOM...',
+                allowOutsideClick: false,
+                didOpen: () => {
+                    Swal.showLoading();
                 }
+            });
+            
+            fetch('../../api/bom.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'ลบ BOM สำเร็จ',
+                        html: `
+                            <p>ลบ BOM ของสินค้า <strong>${productName}</strong> เรียบร้อยแล้ว</p>
+                            <small class="text-muted">คุณสามารถสร้าง BOM ใหม่ได้ทุกเมื่อ</small>
+                        `,
+                        confirmButtonText: 'ตกลง'
+                    }).then(() => {
+                        location.reload();
+                    });
+                } else {
+                    Swal.fire('เกิดข้อผิดพลาด', data.message, 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถลบ BOM ได้', 'error');
+            });
+        }
+        
+        // ฟังก์ชันลบสินค้า
+        function deleteProduct(productId, productName, hasBOM) {
+            if (hasBOM) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'ไม่สามารถลบสินค้าได้',
+                    html: `
+                        <div class="text-start">
+                            <p>สินค้า <strong>${productName}</strong> มี BOM อยู่</p>
+                            <hr>
+                            <div class="alert alert-info">
+                                <i class="fas fa-info-circle me-2"></i>
+                                กรุณาลบ BOM ออกก่อน แล้วจึงจะสามารถลบสินค้าได้
+                            </div>
+                            <p class="mb-0">คุณต้องการลบ BOM ของสินค้านี้หรือไม่?</p>
+                        </div>
+                    `,
+                    showCancelButton: true,
+                    confirmButtonColor: '#dc3545',
+                    cancelButtonColor: '#6c757d',
+                    confirmButtonText: '<i class="fas fa-trash me-1"></i>ลบ BOM ก่อน',
+                    cancelButtonText: 'ยกเลิก',
+                    width: '600px'
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        confirmDeleteBOM(productId, productName);
+                    }
+                });
+            } else {
+                Swal.fire({
+                    title: 'ยืนยันการลบสินค้า?',
+                    html: `
+                        <div class="text-start">
+                            <p><strong>สินค้า:</strong> ${productName}</p>
+                            <hr>
+                            <div class="alert alert-danger">
+                                <i class="fas fa-exclamation-triangle me-2"></i>
+                                <strong>คำเตือน:</strong> การลบสินค้าจะทำให้:
+                                <ul class="mb-0 mt-2">
+                                    <li>ไม่สามารถกู้คืนสินค้านี้ได้</li>
+                                    <li>ประวัติการผลิตที่เกี่ยวข้องอาจหายไป</li>
+                                    <li>ต้องสร้างสินค้าใหม่ถ้าต้องการใช้งานอีกครั้ง</li>
+                                </ul>
+                            </div>
+                        </div>
+                    `,
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#dc3545',
+                    cancelButtonColor: '#6c757d',
+                    confirmButtonText: '<i class="fas fa-trash me-1"></i>ยืนยันการลบ',
+                    cancelButtonText: 'ยกเลิก',
+                    width: '600px'
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        performDeleteProduct(productId, productName);
+                    }
+                });
+            }
+        }
+        
+        // ฟังก์ชันดำเนินการลบสินค้า
+        function performDeleteProduct(productId, productName) {
+            const formData = new FormData();
+            formData.append('action', 'delete');
+            formData.append('product_id', productId);
+            
+            Swal.fire({
+                title: 'กำลังลบสินค้า...',
+                allowOutsideClick: false,
+                didOpen: () => {
+                    Swal.showLoading();
+                }
+            });
+            
+            fetch('../../api/products.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'ลบสินค้าสำเร็จ',
+                        html: `
+                            <p>ลบสินค้า <strong>${productName}</strong> ออกจากระบบเรียบร้อยแล้ว</p>
+                        `,
+                        confirmButtonText: 'ตกลง'
+                    }).then(() => {
+                        location.reload();
+                    });
+                } else {
+                    Swal.fire('เกิดข้อผิดพลาด', data.message, 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถลบสินค้าได้', 'error');
             });
         }
     </script>

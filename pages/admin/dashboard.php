@@ -1,9 +1,9 @@
 <?php
 // pages/admin/dashboard.php
-$page_title = 'แดรชบอร์ดผู้ดูแลระบบ';
+$page_title = 'แดชบอร์ดผู้ดูแลระบบ';
 $breadcrumbs = [
     ['text' => 'หน้าแรก', 'url' => 'dashboard.php'],
-    ['text' => 'แดshบอร์ด']
+    ['text' => 'แดชบอร์ด']
 ];
 
 require_once '../../includes/header.php';
@@ -21,8 +21,7 @@ $stats_query = "
         (SELECT COUNT(*) FROM users WHERE status = 'active') as total_users,
         (SELECT COUNT(*) FROM materials WHERE status = 'active') as total_materials,
         (SELECT COUNT(*) FROM materials WHERE current_stock <= min_stock AND status = 'active') as low_stock_materials,
-        (SELECT COUNT(*) FROM production_jobs WHERE status = 'in_progress') as active_jobs,
-        (SELECT COUNT(*) FROM purchase_requests WHERE status = 'pending') as pending_prs
+        (SELECT COUNT(*) FROM production_jobs WHERE status = 'in_progress') as active_jobs
 ";
 
 $stats = $db->query($stats_query)->fetch();
@@ -61,8 +60,8 @@ $monthly_production = $db->query("
 ")->fetchAll();
 ?>
 
-            <div class="row">
-                <!-- Stats Cards -->
+            <!-- Stats Cards -->
+            <div class="row mb-4">
                 <div class="col-xl-3 col-md-6 mb-4">
                     <div class="stats-card text-center">
                         <i class="fas fa-users icon"></i>
@@ -96,59 +95,54 @@ $monthly_production = $db->query("
                 </div>
             </div>
 
-            <div class="row">
-                <!-- กราฎสถิติการผลิต -->
-                <div class="col-xl-8 col-lg-7">
-                    <div class="card">
-                        <div class="card-header">
-                            <h5><i class="fas fa-chart-line me-2"></i>สถิติการผลิต 6 เดือนย้อนหลัง</h5>
+            <div class="row mb-4">
+                <!-- กราฟสถิติการผลิต -->
+                <div class="col-xl-8 col-lg-8">
+                    <div class="card h-100">
+                        <div class="card-header bg-gradient" style="background: linear-gradient(135deg, #667eea, #764ba2);">
+                            <h5 class="mb-0 text-white"><i class="fas fa-chart-line me-2"></i>สถิติการผลิต 6 เดือนย้อนหลัง</h5>
                         </div>
                         <div class="card-body">
-                            <canvas id="productionChart" height="100"></canvas>
+                            <canvas id="productionChart" height="80"></canvas>
                         </div>
                     </div>
                 </div>
 
-                <!-- คำขอซื้อรอพิจารณา -->
-                <div class="col-xl-4 col-lg-5">
-                    <div class="card">
-                        <div class="card-header">
-                            <h5><i class="fas fa-shopping-cart me-2"></i>คำขอซื้อรอพิจารณา</h5>
-                            <span class="badge bg-warning"><?= $stats['pending_prs'] ?> รายการ</span>
+                <!-- Quick Actions -->
+                <div class="col-xl-4 col-lg-4">
+                    <div class="card h-100">
+                        <div class="card-header" style="background: linear-gradient(135deg, #f093fb, #f5576c);">
+                            <h5 class="mb-0 text-white"><i class="fas fa-bolt me-2"></i>การจัดการด่วน</h5>
                         </div>
                         <div class="card-body">
-                            <?php if ($stats['pending_prs'] > 0): ?>
-                                <div class="alert alert-warning">
-                                    <i class="fas fa-clock me-2"></i>
-                                    มี <strong><?= $stats['pending_prs'] ?></strong> คำขอซื้อรอการอนุมัติ
-                                </div>
-                                <a href="purchase-requests.php" class="btn btn-warning btn-sm">
-                                    <i class="fas fa-eye me-1"></i>ดูรายละเอียด
+                            <div class="d-grid gap-3">
+                                <a href="users.php" class="btn btn-outline-primary d-flex align-items-center justify-content-start">
+                                    <i class="fas fa-user-plus me-3 fa-lg"></i>
+                                    <div class="text-start">
+                                        <strong>เพิ่มผู้ใช้ใหม่</strong>
+                                        <small class="d-block text-muted">จัดการบัญชีผู้ใช้งาน</small>
+                                    </div>
                                 </a>
-                            <?php else: ?>
-                                <p class="text-muted mb-0">ไม่มีคำขอซื้อรอพิจารณา</p>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                    
-                    <!-- Quick Actions -->
-                    <div class="card mt-3">
-                        <div class="card-header">
-                            <h5><i class="fas fa-bolt me-2"></i>การกระทำด่วน</h5>
-                        </div>
-                        <div class="card-body">
-                            <div class="d-grid gap-2">
-                                <a href="users.php" class="btn btn-outline-primary btn-sm">
-                                    <i class="fas fa-user-plus me-1"></i>เพิ่มผู้ใช้ใหม่
+                                <a href="materials.php" class="btn btn-outline-success d-flex align-items-center justify-content-start">
+                                    <i class="fas fa-plus me-3 fa-lg"></i>
+                                    <div class="text-start">
+                                        <strong>เพิ่มวัสดุใหม่</strong>
+                                        <small class="d-block text-muted">เพิ่มรายการวัสดุ</small>
+                                    </div>
                                 </a>
-                                <a href="materials.php" class="btn btn-outline-success btn-sm">
-                                    <i class="fas fa-plus me-1"></i>เพิ่มวัสดุใหม่
+                                <a href="bom.php" class="btn btn-outline-info d-flex align-items-center justify-content-start">
+                                    <i class="fas fa-list-alt me-3 fa-lg"></i>
+                                    <div class="text-start">
+                                        <strong>จัดการ BOM</strong>
+                                        <small class="d-block text-muted">Bill of Materials</small>
+                                    </div>
                                 </a>
-                                <a href="bom.php" class="btn btn-outline-info btn-sm">
-                                    <i class="fas fa-list-alt me-1"></i>จัดการ BOM
-                                </a>
-                                <a href="audit-logs.php" class="btn btn-outline-secondary btn-sm">
-                                    <i class="fas fa-history me-1"></i>ดูประวัติระบบ
+                                <a href="audit-logs.php" class="btn btn-outline-secondary d-flex align-items-center justify-content-start">
+                                    <i class="fas fa-history me-3 fa-lg"></i>
+                                    <div class="text-start">
+                                        <strong>ดูประวัติระบบ</strong>
+                                        <small class="d-block text-muted">บันทึกการใช้งาน</small>
+                                    </div>
                                 </a>
                             </div>
                         </div>
@@ -159,14 +153,14 @@ $monthly_production = $db->query("
             <div class="row">
                 <!-- วัสดุที่สต็อกต่ำ -->
                 <div class="col-xl-6 col-lg-6">
-                    <div class="card">
-                        <div class="card-header">
-                            <h5><i class="fas fa-exclamation-triangle me-2 text-danger"></i>วัสดุที่สต็อกต่ำ</h5>
+                    <div class="card h-100">
+                        <div class="card-header bg-danger text-white">
+                            <h5 class="mb-0"><i class="fas fa-exclamation-triangle me-2"></i>วัสดุที่สต็อกต่ำ</h5>
                         </div>
                         <div class="card-body">
                             <?php if (!empty($low_stock_materials)): ?>
                                 <div class="table-responsive">
-                                    <table class="table table-sm">
+                                    <table class="table table-sm table-hover">
                                         <thead>
                                             <tr>
                                                 <th>รหัสวัสดุ</th>
@@ -198,14 +192,15 @@ $monthly_production = $db->query("
                                     </table>
                                 </div>
                                 <div class="text-center mt-3">
-                                    <a href="materials.php?filter=low_stock" class="btn btn-danger btn-sm">
+                                    <a href="materials.php?filter=low_stock" class="btn btn-danger">
                                         <i class="fas fa-eye me-1"></i>ดูทั้งหมด
                                     </a>
                                 </div>
                             <?php else: ?>
-                                <div class="text-center py-4">
+                                <div class="text-center py-5">
                                     <i class="fas fa-check-circle fa-3x text-success mb-3"></i>
-                                    <p class="text-success mb-0">วัสดุทุกรายการมีสต็อกเพียงพอ</p>
+                                    <h5 class="text-success">ดีเยี่ยม!</h5>
+                                    <p class="text-muted mb-0">วัสดุทุกรายการมีสต็อกเพียงพอ</p>
                                 </div>
                             <?php endif; ?>
                         </div>
@@ -214,9 +209,9 @@ $monthly_production = $db->query("
 
                 <!-- กิจกรรมล่าสุด -->
                 <div class="col-xl-6 col-lg-6">
-                    <div class="card">
-                        <div class="card-header">
-                            <h5><i class="fas fa-history me-2"></i>กิจกรรมล่าสุด</h5>
+                    <div class="card h-100">
+                        <div class="card-header" style="background: linear-gradient(135deg, #4facfe, #00f2fe);">
+                            <h5 class="mb-0 text-white"><i class="fas fa-history me-2"></i>กิจกรรมล่าสุด</h5>
                         </div>
                         <div class="card-body">
                             <div style="max-height: 400px; overflow-y: auto;">
@@ -224,14 +219,24 @@ $monthly_production = $db->query("
                                     <?php foreach ($recent_activities as $activity): ?>
                                         <div class="d-flex mb-3 pb-3 border-bottom">
                                             <div class="flex-shrink-0 me-3">
-                                                <div class="avatar-sm bg-primary text-white rounded-circle d-flex align-items-center justify-content-center">
+                                                <div class="rounded-circle d-flex align-items-center justify-content-center" 
+                                                     style="width: 45px; height: 45px; background: linear-gradient(135deg, #667eea, #764ba2); color: white;">
                                                     <i class="fas fa-user"></i>
                                                 </div>
                                             </div>
                                             <div class="flex-grow-1">
                                                 <h6 class="mb-1"><?= htmlspecialchars($activity['full_name'] ?? 'ระบบ') ?></h6>
                                                 <p class="text-muted mb-1 small">
-                                                    <?= htmlspecialchars($activity['action']) ?>
+                                                    <?php
+                                                    $action_text = [
+                                                        'create' => 'สร้าง',
+                                                        'update' => 'แก้ไข',
+                                                        'delete' => 'ลบ',
+                                                        'login' => 'เข้าสู่ระบบ',
+                                                        'logout' => 'ออกจากระบบ'
+                                                    ];
+                                                    echo $action_text[$activity['action']] ?? htmlspecialchars($activity['action']);
+                                                    ?>
                                                     <?php if ($activity['table_name']): ?>
                                                         ใน <?= htmlspecialchars($activity['table_name']) ?>
                                                     <?php endif; ?>
@@ -244,12 +249,15 @@ $monthly_production = $db->query("
                                         </div>
                                     <?php endforeach; ?>
                                     <div class="text-center">
-                                        <a href="audit-logs.php" class="btn btn-outline-primary btn-sm">
+                                        <a href="audit-logs.php" class="btn btn-outline-info">
                                             <i class="fas fa-eye me-1"></i>ดูทั้งหมด
                                         </a>
                                     </div>
                                 <?php else: ?>
-                                    <p class="text-muted text-center py-4">ไม่มีกิจกรรมล่าสุด</p>
+                                    <div class="text-center py-5">
+                                        <i class="fas fa-info-circle fa-3x text-muted mb-3"></i>
+                                        <p class="text-muted mb-0">ไม่มีกิจกรรมล่าสุด</p>
+                                    </div>
                                 <?php endif; ?>
                             </div>
                         </div>
@@ -273,7 +281,7 @@ $monthly_production = $db->query("
         const monthLabels = productionData.map(item => {
             const [year, month] = item.month.split('-');
             const monthNames = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
-            return monthNames[parseInt(month) - 1] + ' ' + year;
+            return monthNames[parseInt(month) - 1] + ' ' + (parseInt(year) + 543);
         });
         
         new Chart(ctx, {
@@ -285,36 +293,80 @@ $monthly_production = $db->query("
                     data: productionData.map(item => item.job_count),
                     borderColor: 'rgb(102, 126, 234)',
                     backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                    tension: 0.4
+                    tension: 0.4,
+                    fill: true
                 }, {
                     label: 'จำนวนที่วางแผน',
                     data: productionData.map(item => item.total_planned),
                     borderColor: 'rgb(118, 75, 162)',
                     backgroundColor: 'rgba(118, 75, 162, 0.1)',
-                    tension: 0.4
+                    tension: 0.4,
+                    fill: true
                 }, {
                     label: 'จำนวนที่ผลิตจริง',
                     data: productionData.map(item => item.total_produced),
                     borderColor: 'rgb(40, 167, 69)',
                     backgroundColor: 'rgba(40, 167, 69, 0.1)',
-                    tension: 0.4
+                    tension: 0.4,
+                    fill: true
                 }]
             },
             options: {
                 responsive: true,
-                maintainAspectRatio: false,
+                maintainAspectRatio: true,
                 plugins: {
                     legend: {
                         position: 'top',
+                        labels: {
+                            padding: 15,
+                            usePointStyle: true,
+                            font: {
+                                size: 12
+                            }
+                        }
                     },
                     title: {
-                        display: true,
-                        text: 'สถิติการผลิตรายเดือน'
+                        display: false
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12,
+                        titleFont: {
+                            size: 14
+                        },
+                        bodyFont: {
+                            size: 13
+                        }
                     }
+                },
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'x',
+                    intersect: false
                 },
                 scales: {
                     y: {
-                        beginAtZero: true
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        },
+                        ticks: {
+                            font: {
+                                size: 11
+                            }
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            font: {
+                                size: 11
+                            }
+                        }
                     }
                 }
             }
@@ -331,9 +383,15 @@ $monthly_production = $db->query("
             fetch('../../api/notifications.php')
                 .then(response => response.json())
                 .then(data => {
-                    document.querySelector('.notification-badge').textContent = data.count || 0;
+                    if (data.success && data.count) {
+                        const badge = document.querySelector('.notification-badge');
+                        if (badge) {
+                            badge.textContent = data.count;
+                            badge.style.display = data.count > 0 ? 'flex' : 'none';
+                        }
+                    }
                 })
-                .catch(error => console.log('Notification update failed'));
+                .catch(error => console.log('Notification update failed:', error));
         }, 30000);
 
         // Show loading on form submit
@@ -341,8 +399,32 @@ $monthly_production = $db->query("
             const forms = document.querySelectorAll('form');
             forms.forEach(form => {
                 form.addEventListener('submit', function() {
-                    document.getElementById('loading').style.display = 'block';
+                    const loading = document.getElementById('loading');
+                    if (loading) {
+                        loading.style.display = 'block';
+                    }
                 });
+            });
+            
+            // Hide loading after page load
+            window.addEventListener('load', function() {
+                const loading = document.getElementById('loading');
+                if (loading) {
+                    loading.style.display = 'none';
+                }
+            });
+        });
+
+        // Smooth scroll for internal links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth'
+                    });
+                }
             });
         });
     </script>
