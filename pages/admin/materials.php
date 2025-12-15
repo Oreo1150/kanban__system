@@ -1,5 +1,5 @@
 <?php
-// pages/admin/materials.php - Fixed version with units from database
+// pages/admin/materials.php - เพิ่มคำเตือนการแก้ไขสต็อก
 $page_title = 'จัดการวัสดุและสต็อก';
 $breadcrumbs = [
     ['text' => 'หน้าแรก', 'url' => 'dashboard.php'],
@@ -19,19 +19,12 @@ $db = $database->getConnection();
 $stats = $db->query("
     SELECT 
         COUNT(*) as total_materials,
-        COUNT(CASE WHEN current_stock < 50000 THEN 1 END) as low_stock_count,
-        COUNT(CASE WHEN current_stock > 100000 THEN 1 END) as overstock_count,
-        COUNT(CASE WHEN current_stock >= 50000 AND current_stock <= 100000 THEN 1 END) as normal_count
+        COUNT(CASE WHEN current_stock <= min_stock THEN 1 END) as low_stock_count,
+        COUNT(CASE WHEN current_stock > max_stock THEN 1 END) as overstock_count,
+        COUNT(CASE WHEN current_stock > min_stock AND current_stock <= max_stock THEN 1 END) as normal_count
     FROM materials 
     WHERE status = 'active'
 ")->fetch();
-
-// ดึงหน่วยนับทั้งหมดจากตาราง units
-$units = $db->query("
-    SELECT * FROM units 
-    WHERE status = 'active' 
-    ORDER BY unit_name
-")->fetchAll();
 ?>
 
 <style>
@@ -72,6 +65,14 @@ $units = $db->query("
         border-radius: 50%;
         display: inline-block;
     }
+    
+    .stock-edit-warning {
+        background: #fff3cd;
+        border: 1px solid #ffc107;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 15px;
+    }
 </style>
 
             <div class="row mb-4">
@@ -87,7 +88,7 @@ $units = $db->query("
                     <div class="stats-card text-center" style="background: linear-gradient(135deg, #dc3545, #fd7e14);">
                         <i class="fas fa-exclamation-triangle icon"></i>
                         <div class="number"><?= number_format($stats['low_stock_count']) ?></div>
-                        <div class="label">สต็อกต่ำ (< 50,000)</div>
+                        <div class="label">สต็อกต่ำ (≤ Min)</div>
                     </div>
                 </div>
                 
@@ -103,7 +104,7 @@ $units = $db->query("
                     <div class="stats-card text-center" style="background: linear-gradient(135deg, #ffc107, #ff8c00);">
                         <i class="fas fa-arrow-up icon"></i>
                         <div class="number"><?= number_format($stats['overstock_count']) ?></div>
-                        <div class="label">สต็อกเกิน (> 100,000)</div>
+                        <div class="label">สต็อกเกิน (> Max)</div>
                     </div>
                 </div>
             </div>
@@ -155,6 +156,21 @@ $units = $db->query("
                     <div class="modal-body">
                         <input type="hidden" id="material_id" name="material_id">
                         
+                        <!-- คำเตือนการแก้ไขสต็อก (แสดงเฉพาะเมื่อแก้ไข) -->
+                        <div class="stock-edit-warning" id="stockEditWarning" style="display: none;">
+                            <div class="d-flex align-items-start">
+                                <i class="fas fa-exclamation-triangle text-warning me-2 mt-1"></i>
+                                <div>
+                                    <strong>คำเตือน: การแก้ไขสต็อกโดยตรง</strong>
+                                    <p class="mb-0 small">
+                                        การแก้ไขสต็อกปัจจุบันจะถูกบันทึกเป็น <strong>Transaction ประเภท Adjustment</strong> 
+                                        เพื่อติดตามการเปลี่ยนแปลง หากต้องการเพิ่ม/ลดสต็อกตามปกติ 
+                                        ควรใช้ฟังก์ชันรับ/จ่ายวัสดุแทน
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        
                         <div class="row">
                             <div class="col-md-6">
                                 <div class="mb-3">
@@ -171,14 +187,13 @@ $units = $db->query("
                                     </label>
                                     <select class="form-control" id="unit" name="unit" required>
                                         <option value="">เลือกหน่วย</option>
-                                        <?php foreach ($units as $unit): ?>
-                                            <option value="<?= htmlspecialchars($unit['unit_code']) ?>">
-                                                <?= htmlspecialchars($unit['unit_name']) ?>
-                                                <?php if ($unit['unit_name_en']): ?>
-                                                    (<?= htmlspecialchars($unit['unit_name_en']) ?>)
-                                                <?php endif; ?>
-                                            </option>
-                                        <?php endforeach; ?>
+                                        <option value="pcs">ชิ้น (pcs)</option>
+                                        <option value="box">กล่อง (box)</option>
+                                        <option value="pack">แพ็ค (pack)</option>
+                                        <option value="kg">กิโลกรัม (kg)</option>
+                                        <option value="m">เมตร (m)</option>
+                                        <option value="sheet">แผ่น (sheet)</option>
+                                        <option value="roll">ม้วน (roll)</option>
                                     </select>
                                 </div>
                             </div>
@@ -199,8 +214,15 @@ $units = $db->query("
                         <div class="row">
                             <div class="col-md-4">
                                 <div class="mb-3">
-                                    <label for="current_stock" class="form-label">สต็อกปัจจุบัน</label>
-                                    <input type="number" class="form-control" id="current_stock" name="current_stock" value="0" min="0">
+                                    <label for="current_stock" class="form-label">
+                                        สต็อกปัจจุบัน
+                                        <i class="fas fa-info-circle text-info" 
+                                           data-bs-toggle="tooltip" 
+                                           title="แก้ไขได้ - จะถูกบันทึกเป็น transaction"></i>
+                                    </label>
+                                    <input type="number" class="form-control" id="current_stock" name="current_stock" 
+                                           value="0" min="0" onchange="showStockWarning()">
+                                    <small class="text-muted" id="stockChangeInfo"></small>
                                 </div>
                             </div>
                             <div class="col-md-4">
@@ -269,9 +291,16 @@ $units = $db->query("
     <script>
         let materialsTable;
         let currentViewMaterialId = null;
+        let originalStock = 0; // เก็บค่าสต็อกเดิม
         
         $(document).ready(function() {
             initDataTable();
+            
+            // Initialize tooltips
+            var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl);
+            });
         });
         
         function initDataTable() {
@@ -286,20 +315,33 @@ $units = $db->query("
                     {
                         data: null,
                         render: function(data) {
+                            // แปลงค่าเป็น number เพื่อป้องกันการเปรียบเทียบ string
+                            const currentStock = parseFloat(data.current_stock) || 0;
+                            const minStock = parseFloat(data.min_stock) || 0;
+                            const maxStock = parseFloat(data.max_stock) || 0;
+                            
                             let status, icon, color;
-                            if (data.current_stock < 50000) {
+                            
+                            // เทียบกับ min_stock และ max_stock ของแต่ละวัสดุ
+                            if (currentStock <= minStock) {
                                 status = 'low';
                                 icon = 'exclamation-triangle';
-                                color = '#dc3545';
-                            } else if (data.current_stock > 100000) {
+                                color = '#dc3545'; // แดง
+                            } else if (currentStock > maxStock) {
                                 status = 'overstock';
                                 icon = 'arrow-up';
-                                color = '#ffc107';
+                                color = '#ffc107'; // เหลือง
                             } else {
                                 status = 'normal';
                                 icon = 'check-circle';
-                                color = '#28a745';
+                                color = '#28a745'; // เขียว
                             }
+                            
+                            // Debug log (สามารถลบออกได้หลังแก้ไขเสร็จ)
+                            if (data.part_code === 'TAPE-001' || data.part_code === 'Wood-101') {
+                                console.log(`${data.part_code}: current=${currentStock}, min=${minStock}, max=${maxStock}, status=${status}`);
+                            }
+                            
                             return `<span class="stock-indicator" style="background: ${color}" title="${status}"></span>`;
                         }
                     },
@@ -308,14 +350,25 @@ $units = $db->query("
                     {
                         data: null,
                         render: function(data) {
-                            const percentage = (data.current_stock / 100000) * 100;
-                            let barColor = '#28a745';
-                            if (data.current_stock < 50000) barColor = '#dc3545';
-                            else if (data.current_stock > 100000) barColor = '#ffc107';
+                            // แปลงค่าเป็น number เพื่อป้องกันการเปรียบเทียบ string
+                            const currentStock = parseFloat(data.current_stock) || 0;
+                            const minStock = parseFloat(data.min_stock) || 0;
+                            const maxStock = parseFloat(data.max_stock) || 0;
+                            
+                            // คำนวณ percentage ตาม max_stock ของแต่ละวัสดุ
+                            const percentage = maxStock > 0 ? (currentStock / maxStock) * 100 : 0;
+                            
+                            // กำหนดสีตาม min_stock และ max_stock ของแต่ละวัสดุ
+                            let barColor = '#28a745'; // ปกติ (เขียว)
+                            if (currentStock <= minStock) {
+                                barColor = '#dc3545'; // ต่ำ (แดง)
+                            } else if (currentStock > maxStock) {
+                                barColor = '#ffc107'; // เกิน (เหลือง)
+                            }
                             
                             return `
                                 <div>
-                                    <strong>${data.current_stock.toLocaleString()}</strong>
+                                    <strong>${currentStock.toLocaleString()}</strong>
                                     <div class="stock-bar mt-1">
                                         <div class="stock-bar-fill" style="width: ${Math.min(percentage, 100)}%; background: ${barColor}"></div>
                                     </div>
@@ -356,7 +409,7 @@ $units = $db->query("
                         }
                     }
                 ],
-                order: [[3, 'asc']], // Sort by current_stock ascending
+                order: [[3, 'asc']],
                 language: {
                     url: '//cdn.datatables.net/plug-ins/1.11.5/i18n/th.json'
                 },
@@ -375,7 +428,33 @@ $units = $db->query("
             document.getElementById('max_stock').value = '100000';
             document.getElementById('current_stock').value = '0';
             document.getElementById('part_code').readOnly = false;
+            document.getElementById('stockEditWarning').style.display = 'none';
+            document.getElementById('stockChangeInfo').textContent = '';
+            originalStock = 0;
             new bootstrap.Modal(document.getElementById('materialModal')).show();
+        }
+        
+        function showStockWarning() {
+            const materialId = document.getElementById('material_id').value;
+            const newStock = parseInt(document.getElementById('current_stock').value) || 0;
+            
+            // แสดงคำเตือนเฉพาะเมื่อแก้ไขและมีการเปลี่ยนแปลงสต็อก
+            if (materialId && newStock !== originalStock) {
+                document.getElementById('stockEditWarning').style.display = 'block';
+                
+                const diff = newStock - originalStock;
+                const changeText = diff > 0 
+                    ? `เพิ่มขึ้น ${diff.toLocaleString()} หน่วย`
+                    : `ลดลง ${Math.abs(diff).toLocaleString()} หน่วย`;
+                    
+                document.getElementById('stockChangeInfo').innerHTML = `
+                    <i class="fas fa-arrow-${diff > 0 ? 'up text-success' : 'down text-danger'}"></i> 
+                    ${changeText} (จาก ${originalStock.toLocaleString()})
+                `;
+            } else {
+                document.getElementById('stockEditWarning').style.display = 'none';
+                document.getElementById('stockChangeInfo').textContent = '';
+            }
         }
         
         function viewMaterial(materialId) {
@@ -511,6 +590,13 @@ $units = $db->query("
                         document.getElementById('max_stock').value = material.max_stock;
                         document.getElementById('location').value = material.location || '';
                         
+                        // เก็บค่าสต็อกเดิม
+                        originalStock = parseInt(material.current_stock);
+                        
+                        // ซ่อนคำเตือนตอนเริ่มต้น
+                        document.getElementById('stockEditWarning').style.display = 'none';
+                        document.getElementById('stockChangeInfo').textContent = '';
+                        
                         document.getElementById('part_code').readOnly = true;
                         
                         new bootstrap.Modal(document.getElementById('materialModal')).show();
@@ -557,6 +643,7 @@ $units = $db->query("
             });
         }
         
+        // Submit Form
         document.getElementById('materialForm').addEventListener('submit', function(e) {
             e.preventDefault();
             
@@ -564,6 +651,38 @@ $units = $db->query("
             const materialId = formData.get('material_id');
             formData.append('action', materialId ? 'update' : 'create');
             
+            // ตรวจสอบการเปลี่ยนแปลงสต็อก
+            const newStock = parseInt(formData.get('current_stock'));
+            const stockChanged = materialId && newStock !== originalStock;
+            
+            // แสดงการยืนยันเพิ่มเติมถ้ามีการเปลี่ยนแปลงสต็อก
+            if (stockChanged) {
+                const diff = newStock - originalStock;
+                Swal.fire({
+                    title: 'ยืนยันการแก้ไขสต็อก?',
+                    html: `
+                        <p>สต็อกจะเปลี่ยนจาก <strong>${originalStock.toLocaleString()}</strong> 
+                        เป็น <strong>${newStock.toLocaleString()}</strong></p>
+                        <p class="text-${diff > 0 ? 'success' : 'danger'}">
+                            ${diff > 0 ? 'เพิ่มขึ้น' : 'ลดลง'} ${Math.abs(diff).toLocaleString()} หน่วย
+                        </p>
+                        <p class="small text-muted">การเปลี่ยนแปลงนี้จะถูกบันทึกเป็น Transaction</p>
+                    `,
+                    icon: 'question',
+                    showCancelButton: true,
+                    confirmButtonText: 'ยืนยัน',
+                    cancelButtonText: 'ยกเลิก'
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        submitForm(formData);
+                    }
+                });
+            } else {
+                submitForm(formData);
+            }
+        });
+        
+        function submitForm(formData) {
             fetch('../../api/materials.php', {
                 method: 'POST',
                 body: formData
@@ -574,7 +693,6 @@ $units = $db->query("
                     Swal.fire('สำเร็จ', data.message, 'success');
                     bootstrap.Modal.getInstance(document.getElementById('materialModal')).hide();
                     materialsTable.ajax.reload();
-                    
                     document.getElementById('part_code').readOnly = false;
                 } else {
                     Swal.fire('เกิดข้อผิดพลาด', data.message, 'error');
@@ -584,7 +702,7 @@ $units = $db->query("
                 console.error('Error:', error);
                 Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถบันทึกข้อมูลได้', 'error');
             });
-        });
+        }
         
         function checkLowStock() {
             fetch('../../api/materials.php?action=get_all&filter=low_stock')
@@ -593,12 +711,15 @@ $units = $db->query("
                     if (data.success && data.materials.length > 0) {
                         let listHtml = '<ul class="list-group">';
                         data.materials.forEach(material => {
-                            const need = 50000 - material.current_stock;
+                            // คำนวณจำนวนที่ต้องการตาม min_stock ของแต่ละวัสดุ
+                            const need = material.min_stock - material.current_stock;
+                            const percentage = material.min_stock > 0 ? ((material.current_stock / material.min_stock) * 100).toFixed(1) : 0;
                             listHtml += `
                                 <li class="list-group-item d-flex justify-content-between align-items-center">
                                     <div>
                                         <strong>${material.part_code}</strong> - ${material.material_name}
-                                        <br><small>คงเหลือ: ${material.current_stock.toLocaleString()} ${material.unit}</small>
+                                        <br><small>คงเหลือ: ${material.current_stock.toLocaleString()} ${material.unit} 
+                                        (${percentage}% ของ Min)</small>
                                     </div>
                                     <span class="badge bg-danger rounded-pill">
                                         ต้องการ ${need.toLocaleString()}
@@ -611,7 +732,7 @@ $units = $db->query("
                         Swal.fire({
                             title: `<i class="fas fa-exclamation-triangle text-warning"></i> วัสดุที่สต็อกต่ำ`,
                             html: `
-                                <p>พบวัสดุที่สต็อกต่ำกว่า 50,000 ชิ้น จำนวน <strong>${data.materials.length}</strong> รายการ</p>
+                                <p>พบวัสดุที่สต็อกต่ำกว่าหรือเท่ากับระดับต่ำสุด จำนวน <strong>${data.materials.length}</strong> รายการ</p>
                                 ${listHtml}
                             `,
                             icon: 'warning',
