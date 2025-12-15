@@ -187,13 +187,7 @@ $stats = $db->query("
                                     </label>
                                     <select class="form-control" id="unit" name="unit" required>
                                         <option value="">เลือกหน่วย</option>
-                                        <option value="pcs">ชิ้น (pcs)</option>
-                                        <option value="box">กล่อง (box)</option>
-                                        <option value="pack">แพ็ค (pack)</option>
-                                        <option value="kg">กิโลกรัม (kg)</option>
-                                        <option value="m">เมตร (m)</option>
-                                        <option value="sheet">แผ่น (sheet)</option>
-                                        <option value="roll">ม้วน (roll)</option>
+                                        <!-- Units will be loaded dynamically from database -->
                                     </select>
                                 </div>
                             </div>
@@ -295,6 +289,7 @@ $stats = $db->query("
         
         $(document).ready(function() {
             initDataTable();
+            loadUnits(); // โหลดหน่วยนับจาก database
             
             // Initialize tooltips
             var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
@@ -302,6 +297,40 @@ $stats = $db->query("
                 return new bootstrap.Tooltip(tooltipTriggerEl);
             });
         });
+        
+        // ฟังก์ชันโหลดหน่วยนับจาก database
+        function loadUnits() {
+            fetch('../../api/units.php?action=get_all&status=active')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.units) {
+                        const unitSelect = document.getElementById('unit');
+                        
+                        // เคลียร์ options เก่า (เว้นแต่ "เลือกหน่วย")
+                        unitSelect.innerHTML = '<option value="">เลือกหน่วย</option>';
+                        
+                        // เพิ่ม options จาก database
+                        data.units.forEach(unit => {
+                            const option = document.createElement('option');
+                            option.value = unit.unit_code;
+                            
+                            // แสดงชื่อไทยและอังกฤษ (ถ้ามี)
+                            if (unit.unit_name_en) {
+                                option.textContent = `${unit.unit_name} (${unit.unit_code})`;
+                            } else {
+                                option.textContent = `${unit.unit_name} (${unit.unit_code})`;
+                            }
+                            
+                            unitSelect.appendChild(option);
+                        });
+                        
+                        console.log(`✅ โหลดหน่วยนับสำเร็จ: ${data.units.length} รายการ`);
+                    }
+                })
+                .catch(error => {
+                    console.error('❌ Error loading units:', error);
+                });
+        }
         
         function initDataTable() {
             materialsTable = $('#materialsTable').DataTable({
@@ -431,6 +460,10 @@ $stats = $db->query("
             document.getElementById('stockEditWarning').style.display = 'none';
             document.getElementById('stockChangeInfo').textContent = '';
             originalStock = 0;
+            
+            // โหลดหน่วยนับใหม่ทุกครั้งที่เปิด modal (เพื่อให้แน่ใจว่าได้ข้อมูลล่าสุด)
+            loadUnits();
+            
             new bootstrap.Modal(document.getElementById('materialModal')).show();
         }
         
@@ -574,6 +607,9 @@ $stats = $db->query("
         }
         
         function editMaterial(materialId) {
+            // โหลดหน่วยนับใหม่ก่อนเปิด modal
+            loadUnits();
+            
             fetch(`../../api/materials.php?action=get_by_id&id=${materialId}`)
                 .then(response => response.json())
                 .then(data => {
@@ -584,7 +620,12 @@ $stats = $db->query("
                         document.getElementById('part_code').value = material.part_code;
                         document.getElementById('material_name').value = material.material_name;
                         document.getElementById('description').value = material.description || '';
-                        document.getElementById('unit').value = material.unit;
+                        
+                        // รอให้ units โหลดเสร็จก่อนตั้งค่า
+                        setTimeout(() => {
+                            document.getElementById('unit').value = material.unit;
+                        }, 100);
+                        
                         document.getElementById('current_stock').value = material.current_stock;
                         document.getElementById('min_stock').value = material.min_stock;
                         document.getElementById('max_stock').value = material.max_stock;
