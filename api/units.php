@@ -181,7 +181,9 @@ try {
             
             // Get unit data
             $unitQuery = "SELECT u.*, 
-                                 (SELECT COUNT(*) FROM materials m WHERE m.unit = u.unit_code AND m.status = 'active') as material_count
+                                 (SELECT COUNT(*) FROM materials m 
+                                  WHERE m.unit COLLATE utf8mb4_general_ci = u.unit_code COLLATE utf8mb4_general_ci 
+                                  AND m.status = 'active') as material_count
                           FROM units u 
                           WHERE u.unit_id = ?";
             $unitStmt = $db->prepare($unitQuery);

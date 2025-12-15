@@ -1,5 +1,5 @@
 <?php
-// pages/admin/materials.php - Fixed version
+// pages/admin/materials.php - Fixed version with units from database
 $page_title = 'จัดการวัสดุและสต็อก';
 $breadcrumbs = [
     ['text' => 'หน้าแรก', 'url' => 'dashboard.php'],
@@ -25,6 +25,13 @@ $stats = $db->query("
     FROM materials 
     WHERE status = 'active'
 ")->fetch();
+
+// ดึงหน่วยนับทั้งหมดจากตาราง units
+$units = $db->query("
+    SELECT * FROM units 
+    WHERE status = 'active' 
+    ORDER BY unit_name
+")->fetchAll();
 ?>
 
 <style>
@@ -164,13 +171,14 @@ $stats = $db->query("
                                     </label>
                                     <select class="form-control" id="unit" name="unit" required>
                                         <option value="">เลือกหน่วย</option>
-                                        <option value="pcs">ชิ้น (pcs)</option>
-                                        <option value="box">กล่อง (box)</option>
-                                        <option value="pack">แพ็ค (pack)</option>
-                                        <option value="kg">กิโลกรัม (kg)</option>
-                                        <option value="m">เมตร (m)</option>
-                                        <option value="sheet">แผ่น (sheet)</option>
-                                        <option value="roll">ม้วน (roll)</option>
+                                        <?php foreach ($units as $unit): ?>
+                                            <option value="<?= htmlspecialchars($unit['unit_code']) ?>">
+                                                <?= htmlspecialchars($unit['unit_name']) ?>
+                                                <?php if ($unit['unit_name_en']): ?>
+                                                    (<?= htmlspecialchars($unit['unit_name_en']) ?>)
+                                                <?php endif; ?>
+                                            </option>
+                                        <?php endforeach; ?>
                                     </select>
                                 </div>
                             </div>
@@ -354,7 +362,6 @@ $stats = $db->query("
                 },
                 pageLength: 25,
                 drawCallback: function() {
-                    // Re-initialize tooltips after table draw
                     $('[title]').tooltip();
                 }
             });
@@ -371,7 +378,6 @@ $stats = $db->query("
             new bootstrap.Modal(document.getElementById('materialModal')).show();
         }
         
-        // **FIX: Add viewMaterial function**
         function viewMaterial(materialId) {
             currentViewMaterialId = materialId;
             
@@ -482,7 +488,6 @@ $stats = $db->query("
             
             document.getElementById('materialDetailsContent').innerHTML = html;
             
-            // Setup edit button
             document.getElementById('editFromViewBtn').onclick = () => {
                 bootstrap.Modal.getInstance(document.getElementById('viewMaterialModal')).hide();
                 editMaterial(currentViewMaterialId);
@@ -506,7 +511,6 @@ $stats = $db->query("
                         document.getElementById('max_stock').value = material.max_stock;
                         document.getElementById('location').value = material.location || '';
                         
-                        // Disable part_code editing
                         document.getElementById('part_code').readOnly = true;
                         
                         new bootstrap.Modal(document.getElementById('materialModal')).show();
@@ -553,7 +557,6 @@ $stats = $db->query("
             });
         }
         
-        // Submit Form
         document.getElementById('materialForm').addEventListener('submit', function(e) {
             e.preventDefault();
             
@@ -572,7 +575,6 @@ $stats = $db->query("
                     bootstrap.Modal.getInstance(document.getElementById('materialModal')).hide();
                     materialsTable.ajax.reload();
                     
-                    // Re-enable part_code field
                     document.getElementById('part_code').readOnly = false;
                 } else {
                     Swal.fire('เกิดข้อผิดพลาด', data.message, 'error');
