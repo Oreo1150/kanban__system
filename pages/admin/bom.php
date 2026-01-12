@@ -100,24 +100,37 @@ $materials = $db->query("
                             </div>
                         </div>
                         <div class="card-body">
-                            <div class="row">
-                                <?php foreach ($products as $product): ?>
-                                    <div class="col-lg-4 col-md-6 mb-4">
-                                        <div class="product-bom-card card h-100">
-                                            <div class="card-body position-relative">
+                            <div class="table-responsive">
+                                <table class="table table-hover" id="productsBOMTable">
+                                    <thead>
+                                        <tr>
+                                            <th>รหัสสินค้า</th>
+                                            <th>ชื่อสินค้า</th>
+                                            <th>รายละเอียด</th>
+                                            <th>สถานะ BOM</th>
+                                            <th>การจัดการ</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                    <?php foreach ($products as $product): ?>
+                                        <tr>
+                                            <td><code class="bg-light px-2 py-1 rounded"><?= htmlspecialchars($product['product_code']) ?></code></td>
+                                            <td style="cursor:pointer;" onclick="viewBOM(<?= $product['product_id'] ?>)">
+                                                <strong><?= htmlspecialchars($product['product_name']) ?></strong>
+                                            </td>
+                                            <td>
+                                                <?= $product['description'] ? htmlspecialchars(mb_substr($product['description'], 0, 120)) . (mb_strlen($product['description']) > 120 ? '...' : '') : '-' ?>
+                                            </td>
+                                            <td>
                                                 <?php if ($product['has_bom']): ?>
-                                                    <span class="bom-badge badge bg-success">
-                                                        <i class="fas fa-check"></i> มี BOM
-                                                    </span>
+                                                    <span class="badge bg-success"><i class="fas fa-check me-1"></i>มี BOM</span>
                                                 <?php else: ?>
-                                                    <span class="bom-badge badge bg-warning">
-                                                        <i class="fas fa-exclamation-triangle"></i> ยังไม่มี BOM
-                                                    </span>
+                                                    <span class="badge bg-warning"><i class="fas fa-exclamation-triangle me-1"></i>ยังไม่มี BOM</span>
                                                 <?php endif; ?>
-                                                
-                                                <!-- เพิ่มปุ่มเมนู 3 จุด -->
-                                                <div class="position-absolute top-0 start-0 m-2">
-                                                    <div class="dropdown">
+                                            </td>
+                                            <td>
+                                                <div class="d-flex gap-2">
+                                                    <div class="btn-group" role="group">
                                                         <button class="btn btn-sm btn-light" type="button" data-bs-toggle="dropdown" onclick="event.stopPropagation()">
                                                             <i class="fas fa-ellipsis-v"></i>
                                                         </button>
@@ -142,43 +155,21 @@ $materials = $db->query("
                                                             </li>
                                                         </ul>
                                                     </div>
-                                                </div>
-                                                
-                                                <div class="text-center mb-3" style="cursor: pointer;" onclick="viewBOM(<?= $product['product_id'] ?>)">
-                                                    <i class="fas fa-cube fa-3x text-primary mb-3"></i>
-                                                    <h6><?= htmlspecialchars($product['product_name']) ?></h6>
-                                                    <small class="text-muted"><?= htmlspecialchars($product['product_code']) ?></small>
-                                                </div>
-                                                
-                                                <?php if ($product['description']): ?>
-                                                    <p class="text-muted small mb-0">
-                                                        <?= htmlspecialchars(mb_substr($product['description'], 0, 80)) ?>
-                                                        <?= mb_strlen($product['description']) > 80 ? '...' : '' ?>
-                                                    </p>
-                                                <?php endif; ?>
-                                            </div>
-                                            <div class="card-footer bg-transparent">
-                                                <div class="d-flex justify-content-between gap-2">
+
+                                                    <button class="btn btn-info btn-sm" onclick="event.stopPropagation(); viewBOM(<?= $product['product_id'] ?>)" title="ดู"><i class="fas fa-eye"></i></button>
+
                                                     <?php if ($product['has_bom']): ?>
-                                                        <button class="btn btn-info btn-sm flex-fill" onclick="event.stopPropagation(); viewBOM(<?= $product['product_id'] ?>)">
-                                                            <i class="fas fa-eye"></i> ดู
-                                                        </button>
-                                                        <button class="btn btn-warning btn-sm flex-fill" onclick="event.stopPropagation(); editBOM(<?= $product['product_id'] ?>)">
-                                                            <i class="fas fa-edit"></i> แก้ไข
-                                                        </button>
-                                                        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); confirmDeleteBOM(<?= $product['product_id'] ?>, '<?= htmlspecialchars($product['product_name'], ENT_QUOTES) ?>')">
-                                                            <i class="fas fa-trash"></i>
-                                                        </button>
+                                                        <button class="btn btn-warning btn-sm" onclick="event.stopPropagation(); editBOM(<?= $product['product_id'] ?>)" title="แก้ไข"><i class="fas fa-edit"></i></button>
+                                                        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); confirmDeleteBOM(<?= $product['product_id'] ?>, '<?= htmlspecialchars($product['product_name'], ENT_QUOTES) ?>')" title="ลบ"><i class="fas fa-trash"></i></button>
                                                     <?php else: ?>
-                                                        <button class="btn btn-primary btn-sm w-100" onclick="event.stopPropagation(); createBOMForProduct(<?= $product['product_id'] ?>, '<?= htmlspecialchars($product['product_name'], ENT_QUOTES) ?>', '<?= htmlspecialchars($product['product_code'], ENT_QUOTES) ?>')">
-                                                            <i class="fas fa-plus"></i> สร้าง BOM
-                                                        </button>
+                                                        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); createBOMForProduct(<?= $product['product_id'] ?>, '<?= htmlspecialchars($product['product_name'], ENT_QUOTES) ?>', '<?= htmlspecialchars($product['product_code'], ENT_QUOTES) ?>')" title="สร้าง BOM"><i class="fas fa-plus"></i></button>
                                                     <?php endif; ?>
                                                 </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -885,6 +876,28 @@ $materials = $db->query("
                 Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถลบสินค้าได้', 'error');
             });
         }
+    </script>
+
+    <!-- jQuery + DataTables (for products table: length selector & search) -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.11.5/css/dataTables.bootstrap5.min.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap5.min.js"></script>
+
+    <script>
+        // Initialize DataTable on productsBOMTable to show length selector and search
+        $(document).ready(function() {
+            if (document.getElementById('productsBOMTable')) {
+                $('#productsBOMTable').DataTable({
+                    language: { url: '//cdn.datatables.net/plug-ins/1.11.5/i18n/th.json' },
+                    pageLength: 25,
+                    order: [[1, 'asc']],
+                    columnDefs: [
+                        { orderable: false, targets: -1 }
+                    ]
+                });
+            }
+        });
     </script>
 
 </body>

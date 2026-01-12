@@ -131,6 +131,22 @@ $jobs = $available_jobs->fetchAll();
         color: var(--primary-color);
         text-decoration: none;
     }
+
+    /* Readonly quantity inputs: remove border and make them look like plain text */
+    .quantity-input[readonly] {
+        border: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        padding-left: 0.25rem;
+        padding-right: 0.25rem;
+        text-align: center;
+        cursor: default;
+    }
+
+    .quantity-input[readonly]:focus {
+        outline: none !important;
+        box-shadow: none !important;
+    }
 </style>
 
             <!-- Page Header -->
@@ -550,7 +566,7 @@ $jobs = $available_jobs->fetchAll();
                     <td>${material.unit}</td>
                     <td>
                         <input type="number" class="form-control form-control-sm quantity-input" 
-                               value="${material.required_quantity}" min="1" step="0.01"
+                               value="${material.required_quantity}" readonly tabindex="-1" onkeydown="return false;" onwheel="this.blur();"
                                data-material-id="${material.material_id}">
                     </td>
                     <td>

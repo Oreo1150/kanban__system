@@ -22,32 +22,113 @@ try {
             checkRole(['planning', 'admin']);
             
             $data = [
-                'product_id' => (int)$_POST['product_id'],
-                'quantity_planned' => (int)$_POST['quantity_planned'],
-                'start_date' => $_POST['start_date'],
-                'end_date' => $_POST['end_date'],
-                'assigned_to' => (int)$_POST['assigned_to'],
-                'notes' => sanitize($_POST['notes'])
+                'product_id' => (int)($_POST['product_id'] ?? 0),
+                'quantity_planned' => (int)($_POST['quantity_planned'] ?? 0),
+                'start_date' => $_POST['start_date'] ?? null,
+                'end_date' => $_POST['end_date'] ?? null,
+                'assigned_to' => (int)($_POST['assigned_to'] ?? 0),
+                'notes' => sanitize($_POST['notes'] ?? '')
             ];
             
             if ($data['quantity_planned'] <= 0) {
                 throw new Exception('จำนวนที่วางแผนต้องมากกว่า 0');
             }
+
+            // Handle customer: accept customer_id or customer_name (create if needed)
+            $customer_id = null;
+            $customer_name = trim($_POST['customer_name'] ?? '');
+            if (!empty($_POST['customer_id'])) {
+                $customer_id = (int)$_POST['customer_id'];
+            } elseif ($customer_name !== '') {
+                try {
+                    // Try to find existing customer by exact name
+                    $stmt = $db->prepare("SELECT customer_id FROM customers WHERE customer_name = ? LIMIT 1");
+                    $stmt->execute([$customer_name]);
+                    $existing = $stmt->fetch();
+                    if ($existing) {
+                        $customer_id = $existing['customer_id'];
+                    } else {
+                        // Insert new customer (if customers table exists)
+                        $ins = $db->prepare("INSERT INTO customers (customer_name, status, created_at) VALUES (?, 'active', NOW())");
+                        $ins->execute([$customer_name]);
+                        $customer_id = $db->lastInsertId();
+                    }
+                } catch (PDOException $e) {
+                    // If customers table is missing or error occurs, append customer name to notes as fallback
+                    if ($customer_name) {
+                        $data['notes'] .= "\nCustomer: " . $customer_name;
+                    }
+                    $customer_id = null;
+                }
+            }
             
+            // Ensure counter table exists (created if missing) — do this BEFORE starting a transaction
+            try {
+                $db->exec("CREATE TABLE IF NOT EXISTS job_daily_counters (
+                    counter_date DATE PRIMARY KEY,
+                    last_seq INT NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB");
+            } catch (PDOException $e) {
+                // ignore creation errors (permissions)
+            }
+
             $db->beginTransaction();
-            
-            // Generate job number
-            $job_number = 'JOB' . date('Ymd') . sprintf('%04d', rand(1, 9999));
-            
-            // Create job
-            $jobQuery = "INSERT INTO production_jobs (job_number, product_id, quantity_planned, start_date, end_date, assigned_to, notes, created_by) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+
+            // Generate job number using a daily counter table that resets each day
+            $datePart = date('Ymd');
+            $prefix = 'JOB' . $datePart;
+            $today = date('Y-m-d');
+
+            // Use the counters table within the transaction to safely reserve the next sequence
+            try {
+                $seqStmt = $db->prepare("SELECT last_seq FROM job_daily_counters WHERE counter_date = ? FOR UPDATE");
+                $seqStmt->execute([$today]);
+                $lastSeqRow = $seqStmt->fetchColumn();
+
+                if ($lastSeqRow === false) {
+                    // Initialize from existing job numbers for the day (if any)
+                    $maxStmt = $db->prepare("SELECT MAX(CAST(RIGHT(job_number,4) AS UNSIGNED)) FROM production_jobs WHERE job_number LIKE ?");
+                    $maxStmt->execute([$prefix . '%']);
+                    $maxExisting = (int)$maxStmt->fetchColumn();
+
+                    $nextSeq = $maxExisting + 1;
+                    $ins = $db->prepare("INSERT INTO job_daily_counters (counter_date, last_seq) VALUES (?, ?)");
+                    $ins->execute([$today, $nextSeq]);
+                } else {
+                    $nextSeq = ((int)$lastSeqRow) + 1;
+                    $upd = $db->prepare("UPDATE job_daily_counters SET last_seq = ? WHERE counter_date = ?");
+                    $upd->execute([$nextSeq, $today]);
+                }
+            } catch (PDOException $e) {
+                // Fallback: find max suffix in production_jobs (no lock)
+                $seqStmt = $db->prepare("SELECT job_number FROM production_jobs WHERE job_number LIKE ? ORDER BY job_number DESC LIMIT 1");
+                $seqStmt->execute([$prefix . '%']);
+                $lastJob = $seqStmt->fetchColumn();
+                $lastSeq = $lastJob ? (int)substr($lastJob, -4) : 0;
+                $nextSeq = $lastSeq + 1;
+            }
+
+            $job_number = $prefix . sprintf('%04d', $nextSeq);
+
+            // Build insert fields conditionally (if production_jobs has customer_id column)
+            $fields = ['job_number','product_id','quantity_planned','start_date','end_date','assigned_to','notes','created_by'];
+            $params = [$job_number, $data['product_id'], $data['quantity_planned'], $data['start_date'], $data['end_date'], $data['assigned_to'], $data['notes'], $_SESSION['user_id']];
+
+            try {
+                $colCheck = $db->query("SHOW COLUMNS FROM production_jobs LIKE 'customer_id'");
+                if ($colCheck && $colCheck->rowCount() > 0 && $customer_id !== null) {
+                    $fields[] = 'customer_id';
+                    $params[] = $customer_id;
+                }
+            } catch (PDOException $e) {
+                // ignore, table might not exist or no permission
+            }
+
+            $placeholders = implode(', ', array_fill(0, count($fields), '?'));
+            $jobQuery = "INSERT INTO production_jobs (" . implode(', ', $fields) . ") VALUES ($placeholders)";
             $jobStmt = $db->prepare($jobQuery);
-            $jobStmt->execute([
-                $job_number, $data['product_id'], $data['quantity_planned'], 
-                $data['start_date'], $data['end_date'], $data['assigned_to'], 
-                $data['notes'], $_SESSION['user_id']
-            ]);
+            $jobStmt->execute($params);
             
             $job_id = $db->lastInsertId();
             
@@ -80,7 +161,8 @@ try {
                 'message' => 'สร้างงานการผลิตสำเร็จ',
                 'job_id' => $job_id,
                 'job_number' => $job_number,
-                'required_materials' => $required_materials
+                'required_materials' => $required_materials,
+                'customer_id' => $customer_id
             ]);
             break;
             

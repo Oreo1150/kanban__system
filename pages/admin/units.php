@@ -213,6 +213,12 @@ $stats = $db->query("
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
+    <!-- jQuery + DataTables for units table (length selector + search) -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.11.5/css/dataTables.bootstrap5.min.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.11.5/js/dataTables.bootstrap5.min.js"></script>
+
     <script>
         let currentViewUnitId = null;
         
@@ -252,73 +258,86 @@ $stats = $db->query("
                 `;
                 return;
             }
-            
-            let html = '<div class="row">';
-            
-            units.forEach(unit => {
-                const statusBadge = unit.status === 'active' 
+            // Build table rows
+            let html = `
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm" id="unitsTable">
+                        <thead>
+                            <tr>
+                                <th>รหัส</th>
+                                <th>ชื่อ (ไทย)</th>
+                                <th>ชื่อ (EN)</th>
+                                <th>รายละเอียด</th>
+                                <th>สถานะ</th>
+                                <th>การใช้งาน</th>
+                                <th>การจัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            units.forEach((unit, index) => {
+                const statusBadge = unit.status === 'active'
                     ? '<span class="badge bg-success"><i class="fas fa-check-circle me-1"></i>ใช้งานอยู่</span>'
                     : '<span class="badge bg-danger"><i class="fas fa-times-circle me-1"></i>ไม่ได้ใช้งาน</span>';
-                
-                const usageText = unit.material_count > 0 
+
+                const usageText = unit.material_count > 0
                     ? `<span class="text-primary"><i class="fas fa-boxes me-1"></i>${unit.material_count} รายการ</span>`
                     : '<span class="text-muted">ยังไม่มีการใช้งาน</span>';
-                
-                html += `
-                    <div class="col-md-6 col-lg-4 mb-3">
-                        <div class="unit-card">
-                            <div class="d-flex align-items-start">
-                                <div class="unit-icon me-3">
-                                    ${unit.unit_code.toUpperCase()}
-                                </div>
-                                <div class="flex-grow-1">
-                                    <h6 class="mb-1">${unit.unit_name}</h6>
-                                    ${unit.unit_name_en ? `<small class="text-muted">${unit.unit_name_en}</small>` : ''}
-                                    <div class="mt-2">
-                                        <code class="bg-light px-2 py-1 rounded">${unit.unit_code}</code>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            ${unit.description ? `
-                            <div class="mt-3">
-                                <small class="text-muted">${unit.description}</small>
-                            </div>
-                            ` : ''}
-                            
-                            <div class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top">
-                                <div>
-                                    ${statusBadge}
-                                </div>
-                                <div>
-                                    ${usageText}
-                                </div>
-                            </div>
-                            
-                            <div class="mt-3 d-flex gap-2">
-                                <button class="btn btn-info btn-sm flex-fill" onclick="viewUnit(${unit.unit_id})">
-                                    <i class="fas fa-eye me-1"></i>ดู
-                                </button>
-                                ${unit.status === 'active' ? `
-                                    <button class="btn btn-warning btn-sm flex-fill" onclick="editUnit(${unit.unit_id})">
-                                        <i class="fas fa-edit me-1"></i>แก้ไข
-                                    </button>
-                                    <button class="btn btn-danger btn-sm" onclick="deleteUnit(${unit.unit_id}, '${unit.unit_code}')">
-                                        <i class="fas fa-trash"></i>
-                                    </button>
-                                ` : `
-                                    <button class="btn btn-success btn-sm flex-fill" onclick="restoreUnit(${unit.unit_id})">
-                                        <i class="fas fa-undo me-1"></i>กู้คืน
-                                    </button>
-                                `}
-                            </div>
+
+                const actions = unit.status === 'active'
+                    ? `
+                        <div class="btn-group" role="group">
+                            <button class="btn btn-info btn-sm" onclick="viewUnit(${unit.unit_id})" title="ดู"><i class="fas fa-eye"></i></button>
+                            <button class="btn btn-warning btn-sm" onclick="editUnit(${unit.unit_id})" title="แก้ไข"><i class="fas fa-edit"></i></button>
+                            <button class="btn btn-danger btn-sm" onclick="deleteUnit(${unit.unit_id}, '${unit.unit_code}')" title="ลบ"><i class="fas fa-trash"></i></button>
                         </div>
-                    </div>
+                      `
+                    : `
+                        <div class="btn-group" role="group">
+                            <button class="btn btn-info btn-sm" onclick="viewUnit(${unit.unit_id})" title="ดู"><i class="fas fa-eye"></i></button>
+                            <button class="btn btn-success btn-sm" onclick="restoreUnit(${unit.unit_id})" title="กู้คืน"><i class="fas fa-undo"></i></button>
+                        </div>
+                      `;
+
+                html += `
+                    <tr>
+                        <td class="align-middle"><code class="bg-light px-2 py-1 rounded">${unit.unit_code}</code></td>
+                        <td class="align-middle">${unit.unit_name}</td>
+                        <td class="align-middle">${unit.unit_name_en || '-'}</td>
+                        <td class="align-middle">${unit.description ? unit.description : '-'}</td>
+                        <td class="align-middle">${statusBadge}</td>
+                        <td class="align-middle">${usageText}</td>
+                        <td class="align-middle">${actions}</td>
+                    </tr>
                 `;
             });
-            
-            html += '</div>';
+
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
             container.innerHTML = html;
+            
+            // Initialize DataTable for unitsTable (destroy previous instance if exists)
+            if (window.jQuery && $.fn.dataTable) {
+                try {
+                    if ($.fn.dataTable.isDataTable('#unitsTable')) {
+                        $('#unitsTable').DataTable().destroy();
+                    }
+                } catch (e) {
+                    // ignore
+                }
+
+                $('#unitsTable').DataTable({
+                    language: { url: '//cdn.datatables.net/plug-ins/1.11.5/i18n/th.json' },
+                    pageLength: 25,
+                    order: [[1, 'asc']],
+                    columnDefs: [ { orderable: false, targets: -1 } ]
+                });
+            }
         }
         
         function showAddUnitModal() {

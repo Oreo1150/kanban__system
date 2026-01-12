@@ -305,16 +305,36 @@ try {
     }
 
     .btn-wizard {
-        min-width: 120px;
-        padding: 12px 30px;
+        min-width: 140px;
+        width: 160px;
+        padding: 12px 0;
         border-radius: 25px;
         font-weight: 600;
         transition: all 0.3s ease;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+        text-align: center;
     }
 
     .btn-wizard:hover {
         transform: translateY(-2px);
         box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+    }
+    
+    /* Make SweetAlert buttons match wizard button styles for consistent confirmation UI */
+    .swal2-confirm, .swal2-cancel {
+        min-width: 140px !important;
+        width: 160px !important;
+        border-radius: 25px !important;
+        padding: 12px 0 !important;
+        font-weight: 600 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        white-space: nowrap !important;
+        text-align: center !important;
     }
 </style>
 
@@ -513,20 +533,20 @@ try {
 
                     <div class="col-lg-6">
                         <div class="mb-4">
-                            <label for="customer_id" class="form-label">
+                            <label for="customer_input" class="form-label">
                                 <i class="fas fa-building me-1"></i>
                                 ลูกค้า (ไม่บังคับ)
                             </label>
-                            <select class="form-control form-control-lg" id="customer_id" name="customer_id">
-                                <option value="">ไม่ระบุลูกค้า</option>
+                            <input list="customersList" class="form-control form-control-lg" id="customer_input" name="customer_name" placeholder="พิมพ์ชื่อหรือลือกจากรายการ">
+                            <datalist id="customersList">
                                 <?php if (!empty($customers)): ?>
                                     <?php foreach ($customers as $customer): ?>
-                                        <option value="<?= $customer['customer_id'] ?>">
-                                            <?= htmlspecialchars($customer['customer_name']) ?>
-                                        </option>
+                                        <option value="<?= htmlspecialchars($customer['customer_name']) ?>"></option>
                                     <?php endforeach; ?>
                                 <?php endif; ?>
-                            </select>
+                            </datalist>
+                            <input type="hidden" id="customer_id" name="customer_id" value="">
+                            <small id="customer-hint" class="form-text text-muted"></small>
                         </div>
                     </div>
                 </div>
@@ -598,6 +618,10 @@ try {
                                 <tr>
                                     <td><strong>ผู้รับผิดชอบ:</strong></td>
                                     <td id="summary-assigned">-</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>ลูกค้า:</strong></td>
+                                    <td id="summary-customer">-</td>
                                 </tr>
                             </table>
                         </div>
@@ -687,6 +711,29 @@ try {
     document.addEventListener('DOMContentLoaded', function() {
         setDefaultDates();
         updateNavigationButtons();
+
+        // Prepare customers map for datalist matching (name -> id)
+        window.customersMap = {};
+        <?php if (!empty($customers)): ?>
+            <?php foreach ($customers as $customer): ?>
+                window.customersMap[<?= json_encode($customer['customer_name']) ?>] = <?= json_encode($customer['customer_id']) ?>;
+            <?php endforeach; ?>
+        <?php endif; ?>
+
+        // Attach input handler to set hidden customer_id when selecting existing customer
+        const customerInput = document.getElementById('customer_input');
+        if (customerInput) {
+            customerInput.addEventListener('input', function() {
+                const val = this.value.trim();
+                if (window.customersMap[val]) {
+                    document.getElementById('customer_id').value = window.customersMap[val];
+                    document.getElementById('customer-hint').textContent = 'เลือกลูกค้า: มีในระบบ';
+                } else {
+                    document.getElementById('customer_id').value = '';
+                    document.getElementById('customer-hint').textContent = val ? 'ลูกค้าใหม่ (จะสร้างเป็นชื่อลูกค้าใหม่)' : '';
+                }
+            });
+        }
     });
 
     function setDefaultDates() {
@@ -1014,16 +1061,23 @@ try {
         document.getElementById('summary-priority').innerHTML =
             `<span class="priority-badge priority-${document.getElementById('priority').value}">${priority}</span>`;
 
-        // Material summary
+        // Material summary and BOM
+        // Set customer summary
+        const customerName = document.getElementById('customer_input') ? document.getElementById('customer_input').value.trim() : '';
+        document.getElementById('summary-customer').textContent = customerName ? customerName : '-';
+
         if (materialRequirements.length > 0) {
-            let materialHtml = `
-                    <h6 class="mb-3"><i class="fas fa-boxes me-2"></i>สรุปความต้องการวัสดุ</h6>
+            // Build a single combined table: per-unit, required total, current stock, status
+            const plannedQty = parseInt(document.getElementById('quantity_planned').value) || 0;
+            let combinedHtml = `
+                    <h6 class="mb-3"><i class="fas fa-list me-2"></i>รายการวัสดุที่ต้องใช้</h6>
                     <div class="table-responsive">
                         <table class="table">
                             <thead>
                                 <tr>
                                     <th>รหัสวัสดุ</th>
                                     <th>ชื่อวัสดุ</th>
+                                    <th class="text-end">ต่อชิ้น</th>
                                     <th class="text-end">ต้องการ</th>
                                     <th class="text-end">คงเหลือ</th>
                                     <th class="text-center">สถานะ</th>
@@ -1033,30 +1087,38 @@ try {
                 `;
 
             let allSufficient = true;
-            stockAvailability.forEach(item => {
-                const statusClass = item.sufficient ? 'text-success' : 'text-danger';
-                const statusText = item.sufficient ? '✓ เพียงพอ' : '✗ ไม่เพียงพอ';
 
-                if (!item.sufficient) allSufficient = false;
+            materialRequirements.forEach(m => {
+                // Find corresponding stock entry (may be undefined if check not finished)
+                const stock = stockAvailability.find(s => s.material_id === m.material_id) || null;
+                const requiredTotal = (m.required_quantity !== undefined) ? m.required_quantity : (m.quantity_per_unit * plannedQty);
+                const currentStock = stock && stock.current_stock !== undefined ? stock.current_stock : null;
+                const sufficient = stock ? !!stock.sufficient : false;
 
-                materialHtml += `
-                        <tr>
-                            <td><strong>${item.part_code}</strong></td>
-                            <td>${item.material_name}</td>
-                            <td class="text-end">${item.required_quantity.toLocaleString()} ${item.unit}</td>
-                            <td class="text-end">${item.current_stock.toLocaleString()} ${item.unit}</td>
-                            <td class="text-center ${statusClass}"><strong>${statusText}</strong></td>
-                        </tr>
-                    `;
+                if (!sufficient) allSufficient = false;
+
+                const statusClass = stock ? (sufficient ? 'text-success' : 'text-danger') : 'text-muted';
+                const statusText = stock ? (sufficient ? '✓ เพียงพอ' : '✗ ไม่เพียงพอ') : 'กำลังตรวจสอบ...';
+
+                combinedHtml += `
+                    <tr>
+                        <td><strong>${m.part_code}</strong></td>
+                        <td>${m.material_name}</td>
+                        <td class="text-end">${m.quantity_per_unit}</td>
+                        <td class="text-end">${requiredTotal.toLocaleString()} ${m.unit}</td>
+                        <td class="text-end">${currentStock !== null ? currentStock.toLocaleString() + ' ' + m.unit : '<span class="text-muted">-</span>'}</td>
+                        <td class="text-center ${statusClass}"><strong>${statusText}</strong></td>
+                    </tr>
+                `;
             });
 
-            materialHtml += `
+            combinedHtml += `
                             </tbody>
                         </table>
                     </div>
                 `;
 
-            document.getElementById('final-material-summary').innerHTML = materialHtml;
+            document.getElementById('final-material-summary').innerHTML = combinedHtml;
 
             // Readiness status
             const readinessHtml = allSufficient ? `
@@ -1067,7 +1129,7 @@ try {
                 ` : `
                     <div class="alert alert-warning">
                         <h6><i class="fas fa-exclamation-triangle me-2"></i>ต้องการสั่งซื้อวัสดุเพิ่ม</h6>
-                        <p class="mb-0">มีวัสดุบางรายการไม่เพียงพอ ควรสั่งซื้อก่อนเริ่มการผลิต</p>
+                        <p class="mb-0">มีวัสดุบางรายการไม่เพียงพอ หรือยังรอการตรวจสอบสต็อก</p>
                     </div>
                 `;
 
@@ -1160,6 +1222,7 @@ try {
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
+                    const createdCustomer = document.getElementById('customer_input') ? document.getElementById('customer_input').value.trim() : '';
                     Swal.fire({
                         title: 'สำเร็จ!',
                         html: `
@@ -1169,6 +1232,7 @@ try {
                                     <p><strong>เลขที่งาน:</strong> ${data.job_number}</p>
                                     <p><strong>สินค้า:</strong> ${selectedProductName}</p>
                                     <p><strong>จำนวน:</strong> ${document.getElementById('quantity_planned').value} ชิ้น</p>
+                                    ${createdCustomer ? '<p><strong>ลูกค้า:</strong> ' + createdCustomer + '</p>' : ''}
                                 </div>
                             `,
                         icon: 'success',
