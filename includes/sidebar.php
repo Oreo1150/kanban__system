@@ -23,10 +23,10 @@ $menus = [
         'หลัก' => [
             ['icon' => 'fas fa-tachometer-alt', 'text' => 'แดชบอร์ด', 'url' => 'dashboard.php'],
         ],
-        'การผลิต' => [
+            'การผลิต' => [
             ['icon' => 'fas fa-tasks', 'text' => 'งานการผลิต', 'url' => 'production-jobs.php'],
             ['icon' => 'fas fa-plus-circle', 'text' => 'สร้างงานใหม่', 'url' => 'create-job.php'],
-            ['icon' => 'fas fa-calculator', 'text' => 'วางแผนวัสดุ', 'url' => 'material-planning.php'],
+            // 'วางแผนวัสดุ' removed per UI cleanup
         ],
         'การสั่งซื้อ' => [
             ['icon' => 'fas fa-shopping-cart', 'text' => 'คำขอซื้อ', 'url' => 'purchase-requests.php'],
@@ -46,11 +46,11 @@ $menus = [
         'หลัก' => [
             ['icon' => 'fas fa-tachometer-alt', 'text' => 'แดชบอร์ด', 'url' => 'dashboard.php'],
         ],
-        'คลังสินค้า' => [
+            'คลังสินค้า' => [
             ['icon' => 'fas fa-warehouse', 'text' => 'สินค้าคงเหลือ', 'url' => 'inventory.php'],
-            ['icon' => 'fas fa-qrcode', 'text' => 'สแกน QR Code', 'url' => 'qr-scanner.php'],
-            ['icon' => 'fas fa-arrow-down', 'text' => 'รับวัสดุเข้า', 'url' => 'material-in.php'],
+            ['icon' => 'fas fa-file-alt', 'text' => 'คำขอเบิกวัสดุ', 'url' => 'material-requests.php'],
             ['icon' => 'fas fa-arrow-up', 'text' => 'จ่ายวัสดุออก', 'url' => 'material-out.php'],
+            ['icon' => 'fas fa-file-csv', 'text' => 'รายงานรับเข้า', 'url' => 'receipts-report.php'],
             ['icon' => 'fas fa-exclamation-triangle', 'text' => 'แจ้งเตือนสต็อก', 'url' => 'stock-alerts.php'],
         ],
         'การสั่งซื้อ' => [

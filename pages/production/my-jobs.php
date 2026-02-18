@@ -20,13 +20,8 @@ $user_id = $_SESSION['user_id'];
 $filter = $_GET['filter'] ?? 'all';
 $search = $_GET['search'] ?? '';
 
-$where_conditions = ["pj.assigned_to = ?"];
+$where_conditions = ["(pj.assigned_to = ? OR pj.assigned_to IS NULL)"];
 $params = [$user_id];
-
-if ($filter !== 'all') {
-    $where_conditions[] = "pj.status = ?";
-    $params[] = $filter;
-}
 
 if (!empty($search)) {
     $where_conditions[] = "(pj.job_number LIKE ? OR p.product_name LIKE ?)";
@@ -36,6 +31,7 @@ if (!empty($search)) {
 
 $where_clause = implode(' AND ', $where_conditions);
 
+// ดึงข้อมูลทั้งหมดก่อน filter status
 $jobs_query = "
     SELECT pj.*, p.product_name, p.product_code, u.full_name as created_by_name,
            DATEDIFF(pj.end_date, CURDATE()) as days_remaining,
@@ -55,22 +51,32 @@ $jobs_query = "
         pj.end_date ASC
 ";
 
-$params[] = $user_id; // เพิ่มสำหรับ material_request_count
+$all_params = $params;
+$all_params[] = $user_id;
 $stmt = $db->prepare($jobs_query);
-$stmt->execute($params);
-$jobs = $stmt->fetchAll();
+$stmt->execute($all_params);
+$all_jobs = $stmt->fetchAll();
 
 // นับจำนวนตามสถานะ
 $status_counts = [
-    'all' => count($jobs),
+    'all' => count($all_jobs),
     'pending' => 0,
     'in_progress' => 0,
     'completed' => 0,
     'cancelled' => 0
 ];
 
-foreach ($jobs as $job) {
+foreach ($all_jobs as $job) {
     $status_counts[$job['status']]++;
+}
+
+// Filter ตามสถานะ
+$jobs = $all_jobs;
+if ($filter !== 'all') {
+    $jobs = array_filter($all_jobs, function($job) use ($filter) {
+        return $job['status'] === $filter;
+    });
+    $jobs = array_values($jobs); // reset array keys
 }
 ?>
 
@@ -191,6 +197,23 @@ foreach ($jobs as $job) {
         border-color: var(--primary-color);
         box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
     }
+
+    .table-responsive {
+        border-radius: 10px;
+        overflow: hidden;
+    }
+
+    .table thead {
+        background: #f8f9fa;
+    }
+
+    .table tbody tr {
+        transition: all 0.3s ease;
+    }
+
+    .table tbody tr:hover {
+        background: #f8f9fa;
+    }
 </style>
 
             <!-- Filter Tabs -->
@@ -219,146 +242,125 @@ foreach ($jobs as $job) {
                        value="<?= htmlspecialchars($search) ?>" id="searchInput">
             </div>
 
-            <!-- Jobs List -->
-            <div class="row">
-                <?php if (!empty($jobs)): ?>
-                    <?php foreach ($jobs as $job): ?>
-                        <?php
-                        $urgency_class = '';
-                        if ($job['days_remaining'] <= 0 && $job['status'] !== 'completed') {
-                            $urgency_class = 'urgency-urgent';
-                        } elseif ($job['days_remaining'] <= 2 && $job['status'] !== 'completed') {
-                            $urgency_class = 'urgency-high';
-                        }
-                        
-                        $status_colors = [
-                            'pending' => 'warning',
-                            'in_progress' => 'info', 
-                            'completed' => 'success',
-                            'cancelled' => 'danger'
-                        ];
-                        
-                        $status_texts = [
-                            'pending' => 'รอเริ่มงาน',
-                            'in_progress' => 'กำลังทำ',
-                            'completed' => 'เสร็จแล้ว',
-                            'cancelled' => 'ยกเลิก'
-                        ];
-                        ?>
-                        
-                        <div class="col-lg-6 col-xl-4">
-                            <div class="job-card status-<?= $job['status'] ?> <?= $urgency_class ?>">
-                                <div class="card-body">
-                                    <div class="job-header">
-                                        <div class="flex-grow-1">
-                                            <div class="job-number"><?= htmlspecialchars($job['job_number']) ?></div>
-                                            <h6 class="mb-2"><?= htmlspecialchars($job['product_name']) ?></h6>
-                                            <small class="text-muted"><?= htmlspecialchars($job['product_code']) ?></small>
-                                        </div>
-                                        <div class="text-end">
-                                            <span class="badge bg-<?= $status_colors[$job['status']] ?>">
-                                                <?= $status_texts[$job['status']] ?>
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    <!-- Progress -->
-                                    <div class="progress-container">
-                                        <div class="progress" style="height: 25px; border-radius: 12px;">
-                                            <div class="progress-bar bg-success" 
-                                                 style="width: <?= min($job['progress_percent'], 100) ?>%">
+            <!-- Jobs Table -->
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-hover" id="jobsTable">
+                        <thead>
+                            <tr>
+                                <th>เลขที่งาน</th>
+                                <th>สินค้า</th>
+                                <th>สถานะ</th>
+                                <th>ความคืบหน้า</th>
+                                <th>จำนวน</th>
+                                <th>วันที่เสร็จ</th>
+                                <th>วันที่เหลือ</th>
+                                <th>การจัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <tbody>
+                        <?php if (!empty($jobs)): ?>
+                            <?php foreach ($jobs as $job): ?>
+                                <?php
+                                $status_colors = [
+                                    'pending' => 'warning',
+                                    'in_progress' => 'info', 
+                                    'completed' => 'success',
+                                    'cancelled' => 'danger'
+                                ];
+                                
+                                $status_texts = [
+                                    'pending' => 'รอเริ่มงาน',
+                                    'in_progress' => 'กำลังทำ',
+                                    'completed' => 'เสร็จแล้ว',
+                                    'cancelled' => 'ยกเลิก'
+                                ];
+                                ?>
+                                <tr data-status="<?= $job['status'] ?>" data-search="<?= strtolower($job['job_number'] . ' ' . $job['product_name']) ?>">
+                                    <td><strong><?= htmlspecialchars($job['job_number']) ?></strong></td>
+                                    <td>
+                                        <div><?= htmlspecialchars($job['product_name']) ?></div>
+                                        <small class="text-muted"><?= htmlspecialchars($job['product_code']) ?></small>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-<?= $status_colors[$job['status']] ?>">
+                                            <?= $status_texts[$job['status']] ?>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <div class="progress" style="height: 20px; min-width: 150px;">
+                                            <div class="progress-bar" style="width: <?= min($job['progress_percent'], 100) ?>%">
+                                                <?= $job['progress_percent'] ?>%
                                             </div>
                                         </div>
-                                        <div class="progress-text">
-                                            <?= $job['progress_percent'] ?>% 
-                                            (<?= number_format($job['quantity_produced']) ?>/<?= number_format($job['quantity_planned']) ?>)
-                                        </div>
-                                    </div>
-
-                                    <!-- Job Details -->
-                                    <div class="row mb-3">
-                                        <div class="col-6">
-                                            <small class="text-muted">วันที่เริ่ม:</small><br>
-                                            <strong><?= date('d/m/Y', strtotime($job['start_date'])) ?></strong>
-                                        </div>
-                                        <div class="col-6">
-                                            <small class="text-muted">กำหนดเสร็จ:</small><br>
-                                            <strong class="<?= $job['days_remaining'] <= 0 ? 'text-danger' : ($job['days_remaining'] <= 2 ? 'text-warning' : 'text-success') ?>">
-                                                <?= date('d/m/Y', strtotime($job['end_date'])) ?>
-                                                <?php if ($job['status'] !== 'completed' && $job['status'] !== 'cancelled'): ?>
-                                                    <br>
-                                                    <small>
-                                                        <?php if ($job['days_remaining'] < 0): ?>
-                                                            <i class="fas fa-exclamation-triangle"></i> เกิน <?= abs($job['days_remaining']) ?> วัน
-                                                        <?php elseif ($job['days_remaining'] == 0): ?>
-                                                            <i class="fas fa-clock"></i> วันนี้
-                                                        <?php else: ?>
-                                                            <i class="fas fa-calendar"></i> อีก <?= $job['days_remaining'] ?> วัน
-                                                        <?php endif; ?>
-                                                    </small>
-                                                <?php endif; ?>
-                                            </strong>
-                                        </div>
-                                    </div>
-
-                                    <!-- Actions -->
-                                    <div class="d-flex gap-2 flex-wrap">
-                                        <?php if ($job['status'] === 'pending'): ?>
-                                            <button class="btn btn-success btn-sm flex-fill" 
-                                                    onclick="startJob(<?= $job['job_id'] ?>, '<?= htmlspecialchars($job['job_number']) ?>')">
-                                                <i class="fas fa-play"></i> เริ่มงาน
-                                            </button>
-                                        <?php elseif ($job['status'] === 'in_progress'): ?>
-                                            <button class="btn btn-primary btn-sm flex-fill" 
-                                                    onclick="updateProgress(<?= $job['job_id'] ?>, '<?= htmlspecialchars($job['job_number']) ?>', <?= $job['quantity_planned'] ?>, <?= $job['quantity_produced'] ?>)">
-                                                <i class="fas fa-edit"></i> อัพเดท
-                                            </button>
-                                        <?php endif; ?>
-                                        
+                                    </td>
+                                    <td class="text-end">
+                                        <?= number_format($job['quantity_produced']) ?> / <?= number_format($job['quantity_planned']) ?>
+                                    </td>
+                                    <td>
+                                        <small><?= date('d/m/Y', strtotime($job['end_date'])) ?></small>
+                                    </td>
+                                    <td>
                                         <?php if ($job['status'] !== 'completed' && $job['status'] !== 'cancelled'): ?>
-                                            <button class="btn btn-warning btn-sm" 
-                                                    onclick="requestMaterials(<?= $job['job_id'] ?>, '<?= htmlspecialchars($job['job_number']) ?>')">
-                                                <i class="fas fa-hand-paper"></i> เบิกวัสดุ
-                                                <?php if ($job['material_request_count'] > 0): ?>
-                                                    <span class="badge bg-light text-dark"><?= $job['material_request_count'] ?></span>
+                                            <small class="<?= $job['days_remaining'] <= 0 ? 'text-danger fw-bold' : ($job['days_remaining'] <= 2 ? 'text-warning fw-bold' : 'text-success') ?>">
+                                                <?php if ($job['days_remaining'] < 0): ?>
+                                                    เกิน <?= abs($job['days_remaining']) ?> วัน
+                                                <?php elseif ($job['days_remaining'] == 0): ?>
+                                                    วันนี้
+                                                <?php else: ?>
+                                                    อีก <?= $job['days_remaining'] ?> วัน
                                                 <?php endif; ?>
-                                            </button>
-                                        <?php endif; ?>
-                                        
-                                        <button class="btn btn-outline-info btn-sm" 
-                                                onclick="viewJobDetails(<?= $job['job_id'] ?>)">
-                                            <i class="fas fa-eye"></i>
-                                        </button>
-                                    </div>
-
-                                    <!-- Additional Info -->
-                                    <?php if (!empty($job['notes'])): ?>
-                                        <div class="mt-2 pt-2 border-top">
-                                            <small class="text-muted">
-                                                <i class="fas fa-sticky-note me-1"></i>
-                                                <?= htmlspecialchars(mb_substr($job['notes'], 0, 100)) ?>
-                                                <?= mb_strlen($job['notes']) > 100 ? '...' : '' ?>
                                             </small>
+                                        <?php else: ?>
+                                            <small class="text-muted">-</small>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <div class="btn-group" role="group">
+                                            <?php if ($job['status'] === 'pending'): ?>
+                                                <button class="btn btn-success btn-sm" onclick="startJob(<?= $job['job_id'] ?>, '<?= htmlspecialchars($job['job_number']) ?>')" title="เริ่มงาน">
+                                                    <i class="fas fa-play"></i>
+                                                </button>
+                                            <?php elseif ($job['status'] === 'in_progress'): ?>
+                                                <button class="btn btn-primary btn-sm" onclick="updateProgress(<?= $job['job_id'] ?>, '<?= htmlspecialchars($job['job_number']) ?>', <?= $job['quantity_planned'] ?>, <?= $job['quantity_produced'] ?>)" title="อัพเดท">
+                                                    <i class="fas fa-edit"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                            
+                                            <?php if ($job['status'] !== 'completed' && $job['status'] !== 'cancelled'): ?>
+                                                <button class="btn btn-warning btn-sm" onclick="requestMaterials(<?= $job['job_id'] ?>, '<?= htmlspecialchars($job['job_number']) ?>')" title="เบิกวัสดุ">
+                                                    <i class="fas fa-hand-paper"></i>
+                                                    <?php if ($job['material_request_count'] > 0): ?>
+                                                        <span class="badge bg-light text-dark"><?= $job['material_request_count'] ?></span>
+                                                    <?php endif; ?>
+                                                </button>
+                                            <?php endif; ?>
+                                            
+                                            <button class="btn btn-info btn-sm" onclick="viewJobDetails(<?= $job['job_id'] ?>)" title="ดูรายละเอียด">
+                                                <i class="fas fa-eye"></i>
+                                            </button>
                                         </div>
-                                    <?php endif; ?>
-                                </div>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <div class="col-12">
-                        <div class="text-center py-5">
-                            <i class="fas fa-clipboard-list fa-4x text-muted mb-4"></i>
-                            <h4 class="text-muted">ไม่พบงาน</h4>
-                            <?php if ($filter === 'all'): ?>
-                                <p class="text-muted">ยังไม่มีงานที่ได้รับมอบหมาย</p>
-                            <?php else: ?>
-                                <p class="text-muted">ไม่มีงานในสถานะ "<?= $status_texts[$filter] ?? $filter ?>"</p>
-                                <a href="?" class="btn btn-primary">ดูงานทั้งหมด</a>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr>
+                                <td colspan="8" class="text-center py-5">
+                                    <i class="fas fa-clipboard-list fa-3x text-muted mb-3"></i>
+                                    <div class="text-muted">
+                                        <?php if ($filter === 'all'): ?>
+                                            ยังไม่มีงานที่ได้รับมอบหมาย
+                                        <?php else: ?>
+                                            ไม่มีงานในสถานะ "<?= $status_texts[$filter] ?? $filter ?>"
+                                        <?php endif; ?>
+                                    </div>
+                                </td>
+                            </tr>
+                        <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
         </div>
@@ -529,14 +531,17 @@ foreach ($jobs as $job) {
             fetch(`../../api/jobs.php?action=get_detail&job_id=${jobId}`)
                 .then(response => response.json())
                 .then(data => {
+                    console.log('Job Detail Response:', data);
                     if (data.success) {
-                        displayJobDetails(data.job);
+                        const job = data.data || data.job;
+                        displayJobDetails(job);
                         new bootstrap.Modal(document.getElementById('jobDetailsModal')).show();
                     } else {
                         Swal.fire('เกิดข้อผิดพลาด', data.message, 'error');
                     }
                 })
                 .catch(error => {
+                    console.error('Error:', error);
                     Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถโหลดรายละเอียดงานได้', 'error');
                 });
         }
@@ -607,7 +612,9 @@ foreach ($jobs as $job) {
                 `;
             }
 
-            if (job.materials && job.materials.length > 0) {
+            // Support both legacy `materials` and new `required_materials` from API
+            const materialsList = job.required_materials || job.materials || [];
+            if (materialsList && materialsList.length > 0) {
                 html += `
                     <div class="mb-4">
                         <strong>วัสดุที่ต้องใช้:</strong>
@@ -619,23 +626,36 @@ foreach ($jobs as $job) {
                                         <th>ชื่อวัสดุ</th>
                                         <th class="text-end">จำนวน</th>
                                         <th>หน่วย</th>
+                                        <th class="text-center">การ์ด</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                 `;
-                
-                job.materials.forEach(material => {
+
+                materialsList.forEach(material => {
+                    const requiredQty = Number(material.required_quantity || 0);
+                    const quantityPerCard = Number(material.quantity_per_card || material.quantity_per_unit || 1);
+                    const totalCards = Math.ceil(requiredQty / Math.max(1, quantityPerCard));
+                    const cardColor = material.card_color || '#3498db';
+
                     html += `
                         <tr>
                             <td>${material.part_code}</td>
                             <td>${material.material_name}</td>
-                            <td class="text-end"
-                                           <td class="text-end">${material.required_quantity.toLocaleString()}</td>
+                            <td class="text-end">${requiredQty.toLocaleString()}</td>
                             <td>${material.unit}</td>
+                            <td class="text-center">
+                                <div style="display:inline-flex;align-items:center;gap:6px;">
+                                    <div style="width:44px;height:44px;background-color:${cardColor};border:2px solid #ddd;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+                                        <span style="color:white;font-weight:700;font-size:14px;">${totalCards}</span>
+                                        <span style="color:white;font-size:9px;">ใบ</span>
+                                    </div>
+                                </div>
+                            </td>
                         </tr>
                     `;
                 });
-                
+
                 html += `
                                 </tbody>
                             </table>

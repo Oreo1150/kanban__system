@@ -73,125 +73,75 @@ foreach ($requests as $request) {
     $status_counts[$request['status']]++;
 }
 
-// ดึงงานที่สามารถเบิกวัสดุได้
 $available_jobs = $db->prepare("
     SELECT pj.*, p.product_name
     FROM production_jobs pj
     LEFT JOIN products p ON pj.product_id = p.product_id
-    WHERE pj.assigned_to = ? AND pj.status IN ('pending', 'in_progress')
+    WHERE (pj.assigned_to = ? OR pj.assigned_to IS NULL) AND pj.status IN ('pending', 'in_progress')
     ORDER BY pj.created_at DESC
 ");
 $available_jobs->execute([$user_id]);
 $jobs = $available_jobs->fetchAll();
 ?>
 
-<style>
-    .request-card {
-        border: none;
-        border-radius: 15px;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.08);
-        transition: all 0.3s ease;
-        margin-bottom: 20px;
-        border-left: 5px solid;
-    }
-    
-    .request-card.status-pending { border-left-color: #ffc107; }
-    .request-card.status-approved { border-left-color: #28a745; }
-    .request-card.status-rejected { border-left-color: #dc3545; }
-    .request-card.status-fulfilled { border-left-color: #17a2b8; }
-    
-    .request-card:hover {
-        box-shadow: 0 8px 25px rgba(0,0,0,0.15);
-        transform: translateY(-2px);
-    }
-    
-    .filter-tabs {
-        background: #f8f9fa;
-        border-radius: 15px;
-        padding: 5px;
-        margin-bottom: 25px;
-    }
-    
-    .filter-tab {
-        display: inline-block;
-        padding: 10px 20px;
-        border-radius: 10px;
-        text-decoration: none;
-        color: #6c757d;
-        transition: all 0.3s ease;
-        margin: 0 2px;
-    }
-    
-    .filter-tab.active {
-        background: var(--primary-color);
-        color: white;
-    }
-    
-    .filter-tab:hover {
-        color: var(--primary-color);
-        text-decoration: none;
-    }
+<!-- Filter Tabs -->
+<div class="mb-4">
+    <div class="btn-group" role="group">
+        <a href="?filter=all" class="btn btn-outline-primary <?= $filter === 'all' ? 'active' : '' ?>">
+            <i class="fas fa-list me-1"></i>ทั้งหมด <span class="badge bg-secondary ms-1"><?= $status_counts['all'] ?></span>
+        </a>
+        <a href="?filter=pending" class="btn btn-outline-primary <?= $filter === 'pending' ? 'active' : '' ?>">
+            <i class="fas fa-clock me-1"></i>รอพิจารณา <span class="badge bg-warning ms-1"><?= $status_counts['pending'] ?></span>
+        </a>
+        <a href="?filter=approved" class="btn btn-outline-primary <?= $filter === 'approved' ? 'active' : '' ?>">
+            <i class="fas fa-check me-1"></i>อนุมัติแล้ว <span class="badge bg-success ms-1"><?= $status_counts['approved'] ?></span>
+        </a>
+        <a href="?filter=fulfilled" class="btn btn-outline-primary <?= $filter === 'fulfilled' ? 'active' : '' ?>">
+            <i class="fas fa-box me-1"></i>จ่ายแล้ว <span class="badge bg-info ms-1"><?= $status_counts['fulfilled'] ?></span>
+        </a>
+        <a href="?filter=rejected" class="btn btn-outline-primary <?= $filter === 'rejected' ? 'active' : '' ?>">
+            <i class="fas fa-times me-1"></i>ปฏิเสธ <span class="badge bg-danger ms-1"><?= $status_counts['rejected'] ?></span>
+        </a>
+    </div>
+</div>
 
-    /* Readonly quantity inputs: remove border and make them look like plain text */
-    .quantity-input[readonly] {
-        border: none !important;
-        background: transparent !important;
-        box-shadow: none !important;
-        padding-left: 0.25rem;
-        padding-right: 0.25rem;
-        text-align: center;
-        cursor: default;
-    }
+<!-- Search and Action -->
+<div class="row mb-4">
+    <div class="col-md-8">
+        <div class="input-group">
+            <span class="input-group-text"><i class="fas fa-search"></i></span>
+            <input type="text" class="form-control" id="searchInput" 
+                   placeholder="ค้นหาเลขที่คำขอ หรือ Job..." 
+                   value="<?= htmlspecialchars($search) ?>">
+        </div>
+    </div>
+    <div class="col-md-4 text-end">
+        <button class="btn btn-primary me-2" data-bs-toggle="modal" data-bs-target="#createRequestModal">
+            <i class="fas fa-plus me-1"></i>สร้างคำขอใหม่
+        </button>
+        <button class="btn btn-outline-primary" onclick="refreshPage()">
+            <i class="fas fa-sync-alt me-1"></i>รีเฟรช
+        </button>
+    </div>
+</div>
 
-    .quantity-input[readonly]:focus {
-        outline: none !important;
-        box-shadow: none !important;
-    }
-</style>
-
-            <!-- Page Header -->
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <div>
-                    <h4><i class="fas fa-hand-paper me-2"></i>คำขอเบิกวัสดุ</h4>
-                    <p class="text-muted mb-0">จัดการคำขอเบิกวัสดุสำหรับการผลิต</p>
-                </div>
-                <button class="btn btn-primary btn-lg" data-bs-toggle="modal" data-bs-target="#createRequestModal">
-                    <i class="fas fa-plus me-2"></i>สร้างคำขอใหม่
-                </button>
-            </div>
-
-            <!-- Filter Tabs -->
-            <div class="filter-tabs">
-                <a href="?filter=all" class="filter-tab <?= $filter === 'all' ? 'active' : '' ?>">
-                    ทั้งหมด (<?= $status_counts['all'] ?>)
-                </a>
-                <a href="?filter=pending" class="filter-tab <?= $filter === 'pending' ? 'active' : '' ?>">
-                    <i class="fas fa-clock"></i> รอพิจารณา (<?= $status_counts['pending'] ?>)
-                </a>
-                <a href="?filter=approved" class="filter-tab <?= $filter === 'approved' ? 'active' : '' ?>">
-                    <i class="fas fa-check"></i> อนุมัติแล้ว (<?= $status_counts['approved'] ?>)
-                </a>
-                <a href="?filter=fulfilled" class="filter-tab <?= $filter === 'fulfilled' ? 'active' : '' ?>">
-                    <i class="fas fa-box"></i> จ่ายแล้ว (<?= $status_counts['fulfilled'] ?>)
-                </a>
-                <a href="?filter=rejected" class="filter-tab <?= $filter === 'rejected' ? 'active' : '' ?>">
-                    <i class="fas fa-times"></i> ปฏิเสธ (<?= $status_counts['rejected'] ?>)
-                </a>
-            </div>
-
-            <!-- Search -->
-            <div class="row mb-4">
-                <div class="col-md-6">
-                    <div class="input-group">
-                        <span class="input-group-text"><i class="fas fa-search"></i></span>
-                        <input type="text" class="form-control" id="searchInput" placeholder="ค้นหาเลขที่คำขอ หรือ Job..." value="<?= htmlspecialchars($search) ?>">
-                    </div>
-                </div>
-            </div>
-
-            <!-- Requests List -->
-            <div class="row">
-                <?php if (!empty($requests)): ?>
+<!-- Requests Table -->
+<?php if (!empty($requests)): ?>
+    <div class="card">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>เลขที่คำขอ</th>
+                        <th>Job / สินค้า</th>
+                        <th>รายการวัสดุ</th>
+                        <th>วันที่ขอ</th>
+                        <th>สถานะ</th>
+                        <th>ผู้อนุมัติ</th>
+                        <th>การกระทำ</th>
+                    </tr>
+                </thead>
+                <tbody>
                     <?php foreach ($requests as $request): ?>
                         <?php
                         $status_colors = [
@@ -207,107 +157,63 @@ $jobs = $available_jobs->fetchAll();
                             'rejected' => 'ปฏิเสธ',
                             'fulfilled' => 'จ่ายแล้ว'
                         ];
-                        
-                        $status_icons = [
-                            'pending' => 'clock',
-                            'approved' => 'check-circle',
-                            'rejected' => 'times-circle',
-                            'fulfilled' => 'box'
-                        ];
                         ?>
-                        
-                        <div class="col-lg-6 col-xl-4">
-                            <div class="request-card status-<?= $request['status'] ?>">
-                                <div class="card-body">
-                                    <div class="d-flex justify-content-between align-items-start mb-3">
-                                        <div>
-                                            <h6 class="mb-1">
-                                                <strong><?= htmlspecialchars($request['request_number']) ?></strong>
-                                            </h6>
-                                            <small class="text-muted">
-                                                <i class="fas fa-calendar me-1"></i>
-                                                <?= date('d/m/Y H:i', strtotime($request['request_date'])) ?>
-                                            </small>
-                                        </div>
-                                        <span class="badge bg-<?= $status_colors[$request['status']] ?>">
-                                            <i class="fas fa-<?= $status_icons[$request['status']] ?> me-1"></i>
-                                            <?= $status_texts[$request['status']] ?>
-                                        </span>
-                                    </div>
-                                    
-                                    <div class="mb-3">
-                                        <div class="d-flex align-items-center mb-2">
-                                            <i class="fas fa-briefcase me-2 text-primary"></i>
-                                            <strong>Job:</strong>&nbsp;
-                                            <span class="badge bg-info"><?= htmlspecialchars($request['job_number']) ?></span>
-                                        </div>
-                                        <div class="d-flex align-items-center mb-2">
-                                            <i class="fas fa-box me-2 text-success"></i>
-                                            <strong>สินค้า:</strong>&nbsp;
-                                            <?= htmlspecialchars($request['product_name']) ?>
-                                        </div>
-                                        <div class="d-flex align-items-center">
-                                            <i class="fas fa-list me-2 text-warning"></i>
-                                            <strong>รายการวัสดุ:</strong>&nbsp;
-                                            <?= $request['item_count'] ?> รายการ
-                                        </div>
-                                    </div>
-                                    
-                                    <?php if ($request['approved_by_name']): ?>
-                                        <div class="mb-3 p-2 bg-light rounded">
-                                            <small class="text-muted">
-                                                <i class="fas fa-user-check me-1"></i>
-                                                <?= $request['status'] === 'approved' || $request['status'] === 'fulfilled' ? 'อนุมัติโดย' : 'ปฏิเสธโดย' ?>:
-                                                <strong><?= htmlspecialchars($request['approved_by_name']) ?></strong>
-                                                <br>
-                                                <i class="fas fa-clock me-1"></i>
-                                                <?= date('d/m/Y H:i', strtotime($request['approved_date'])) ?>
-                                            </small>
-                                        </div>
-                                    <?php endif; ?>
-                                    
-                                    <?php if ($request['notes']): ?>
-                                        <div class="mb-3">
-                                            <small class="text-muted">
-                                                <i class="fas fa-sticky-note me-1"></i>
-                                                <?= htmlspecialchars(mb_substr($request['notes'], 0, 80)) ?>
-                                                <?= mb_strlen($request['notes']) > 80 ? '...' : '' ?>
-                                            </small>
-                                        </div>
-                                    <?php endif; ?>
-                                    
-                                    <div class="d-flex gap-2">
-                                        <button class="btn btn-outline-primary btn-sm flex-fill" onclick="viewRequestDetails(<?= $request['request_id'] ?>)">
-                                            <i class="fas fa-eye"></i> ดูรายละเอียด
-                                        </button>
-                                        <?php if ($request['status'] === 'fulfilled'): ?>
-                                            <button class="btn btn-outline-success btn-sm" onclick="printRequest(<?= $request['request_id'] ?>)">
-                                                <i class="fas fa-print"></i>
-                                            </button>
-                                        <?php endif; ?>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <div class="col-12">
-                        <div class="text-center py-5">
-                            <i class="fas fa-inbox fa-4x text-muted mb-4"></i>
-                            <h4 class="text-muted">ไม่พบคำขอเบิกวัสดุ</h4>
-                            <?php if ($filter === 'all'): ?>
-                                <p class="text-muted mb-4">คุณยังไม่มีคำขอเบิกวัสดุ</p>
-                                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createRequestModal">
-                                    <i class="fas fa-plus me-2"></i>สร้างคำขอใหม่
+                        <tr>
+                            <td><strong><?= htmlspecialchars($request['request_number']) ?></strong></td>
+                            <td>
+                                <strong><?= htmlspecialchars($request['job_number']) ?></strong><br>
+                                <small class="text-muted"><?= htmlspecialchars($request['product_name']) ?></small>
+                            </td>
+                            <td>
+                                <span class="badge bg-secondary"><?= $request['item_count'] ?> รายการ</span>
+                            </td>
+                            <td><?= date('d/m/Y H:i', strtotime($request['request_date'])) ?></td>
+                            <td>
+                                <span class="badge bg-<?= $status_colors[$request['status']] ?>">
+                                    <?= $status_texts[$request['status']] ?>
+                                </span>
+                            </td>
+                            <td>
+                                <?php if ($request['approved_by_name']): ?>
+                                    <?= htmlspecialchars($request['approved_by_name']) ?><br>
+                                    <small class="text-muted"><?= date('d/m/Y', strtotime($request['approved_date'])) ?></small>
+                                <?php else: ?>
+                                    <span class="text-muted">-</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <button class="btn btn-outline-primary btn-sm" onclick="viewRequestDetails(<?= $request['request_id'] ?>)">
+                                    <i class="fas fa-eye"></i>
                                 </button>
-                            <?php else: ?>
-                                <p class="text-muted">ไม่มีคำขอในสถานะ "<?= $status_texts[$filter] ?? $filter ?>"</p>
-                                <a href="?" class="btn btn-primary">ดูคำขอทั้งหมด</a>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                <?php endif; ?>
-            </div>
+                                <?php if ($request['status'] === 'fulfilled'): ?>
+                                    <button class="btn btn-outline-success btn-sm" onclick="printRequest(<?= $request['request_id'] ?>)">
+                                        <i class="fas fa-print"></i>
+                                    </button>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+<?php else: ?>
+    <div class="card">
+        <div class="card-body text-center py-5">
+            <i class="fas fa-inbox fa-4x text-muted mb-4"></i>
+            <h4 class="text-muted">ไม่พบคำขอเบิกวัสดุ</h4>
+            <?php if ($filter === 'all'): ?>
+                <p class="text-muted mb-4">คุณยังไม่มีคำขอเบิกวัสดุ</p>
+                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createRequestModal">
+                    <i class="fas fa-plus me-2"></i>สร้างคำขอใหม่
+                </button>
+            <?php else: ?>
+                <p class="text-muted">ไม่มีคำขอในสถานะ "<?= $status_texts[$filter] ?? $filter ?>"</p>
+                <a href="?" class="btn btn-primary">ดูคำขอทั้งหมด</a>
+            <?php endif; ?>
+        </div>
+    </div>
+<?php endif; ?>
 
         </div>
     </div>
@@ -374,17 +280,18 @@ $jobs = $available_jobs->fetchAll();
                                             <th width="5%">
                                                 <input type="checkbox" id="select-all-materials" class="form-check-input">
                                             </th>
-                                            <th width="15%">รหัสวัสดุ</th>
-                                            <th width="25%">ชื่อวัสดุ</th>
+                                            <th width="12%">รหัสวัสดุ</th>
+                                            <th width="20%">ชื่อวัสดุ</th>
                                             <th width="10%">หน่วย</th>
-                                            <th width="15%">จำนวนที่ต้องการ</th>
+                                            <th width="13%">จำนวนที่ต้องการ</th>
                                             <th width="15%">สต็อกคงเหลือ</th>
+                                            <th width="10%">การ์ด</th>
                                             <th width="15%">สถานะ</th>
                                         </tr>
                                     </thead>
                                     <tbody id="materials-tbody">
                                         <tr>
-                                            <td colspan="7" class="text-center text-muted">
+                                            <td colspan="8" class="text-center text-muted">
                                                 <i class="fas fa-info-circle me-2"></i>
                                                 กรุณาเลือกงานและกดปุ่ม "โหลดวัสดุจาก BOM"
                                             </td>
@@ -485,6 +392,10 @@ $jobs = $available_jobs->fetchAll();
             }, 500);
         });
 
+        function refreshPage() {
+            location.reload();
+        }
+
         // Job selection handler
         document.getElementById('select_job').addEventListener('change', function() {
             const selected = this.selectedOptions[0];
@@ -553,8 +464,16 @@ $jobs = $available_jobs->fetchAll();
             const tbody = document.getElementById('materials-tbody');
             tbody.innerHTML = '';
 
+            // reset selectedMaterials before populating
+            selectedMaterials = [];
+
             materials.forEach(material => {
                 const stockStatus = getStockStatus(material.current_stock, material.required_quantity);
+                const cardColor = material.card_color || '#3498db';
+                const quantityPerCard = material.quantity_per_card || material.quantity_per_unit || 1; // จำนวนต่อการ์ด (fallback to per-unit)
+                const quantityPerUnit = material.quantity_per_unit || 1;
+                const totalCards = Math.ceil((material.required_quantity || 0) / quantityPerCard); // คำนวณจำนวนการ์ด
+                
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td>
@@ -574,6 +493,12 @@ $jobs = $available_jobs->fetchAll();
                         ${material.current_stock <= material.min_stock ? '<i class="fas fa-exclamation-triangle text-warning ms-1"></i>' : ''}
                     </td>
                     <td>
+                        <div style="display: inline-block; width: 45px; height: 45px; background-color: ${cardColor}; border: 2px solid #ddd; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center;" title="จำนวน/การ์ด: ${quantityPerCard}">
+                            <span style="color: white; font-weight: bold; text-shadow: 0 1px 1px rgba(0,0,0,0.3); font-size: 14px;">${totalCards}</span>
+                            <span style="color: white; font-weight: 500; text-shadow: 0 1px 1px rgba(0,0,0,0.3); font-size: 8px;">ใบ</span>
+                        </div>
+                    </td>
+                    <td>
                         <span class="badge bg-${stockStatus.class}">${stockStatus.text}</span>
                     </td>
                 `;
@@ -582,7 +507,10 @@ $jobs = $available_jobs->fetchAll();
                 // Add to selected materials
                 selectedMaterials.push({
                     material_id: material.material_id,
-                    quantity: material.required_quantity
+                    quantity: material.required_quantity,
+                    card_color: cardColor,
+                    quantity_per_unit: quantityPerUnit,
+                    total_cards: totalCards
                 });
             });
 
@@ -605,11 +533,17 @@ $jobs = $available_jobs->fetchAll();
                 checkbox.addEventListener('change', function() {
                     const material = JSON.parse(this.dataset.material);
                     const quantityInput = this.closest('tr').querySelector('.quantity-input');
+                    const quantity = parseFloat(quantityInput.value);
+                    const quantityPerUnit = material.quantity_per_unit || 1;
+                    const totalCards = Math.ceil(quantity / quantityPerUnit);
                     
                     if (this.checked) {
                         selectedMaterials.push({
                             material_id: material.material_id,
-                            quantity: parseFloat(quantityInput.value)
+                            quantity: quantity,
+                            card_color: material.card_color,
+                            quantity_per_unit: quantityPerUnit,
+                            total_cards: totalCards
                         });
                     } else {
                         selectedMaterials = selectedMaterials.filter(m => m.material_id !== material.material_id);
@@ -624,6 +558,7 @@ $jobs = $available_jobs->fetchAll();
                     const material = selectedMaterials.find(m => m.material_id === materialId);
                     if (material) {
                         material.quantity = parseFloat(this.value);
+                        material.total_cards = Math.ceil(material.quantity / material.quantity_per_unit);
                     }
                     updateSummary();
                 });
@@ -719,15 +654,125 @@ $jobs = $available_jobs->fetchAll();
 
         // View request details
         function viewRequestDetails(requestId) {
-            fetch(`../../api/get_request_detail.php?request_id=${requestId}`)
-                .then(response => response.text())
-                .then(html => {
-                    document.getElementById('requestDetailsContent').innerHTML = html;
-                    new bootstrap.Modal(document.getElementById('requestDetailsModal')).show();
+            fetch(`../../api/material-requests.php?action=get&id=${requestId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const request = data.data;
+                        const details = data.data.details || [];
+                        
+                        const statusColors = {
+                            'pending': 'warning',
+                            'approved': 'success',
+                            'rejected': 'danger',
+                            'fulfilled': 'info'
+                        };
+                        const statusTexts = {
+                            'pending': 'รอพิจารณา',
+                            'approved': 'อนุมัติแล้ว',
+                            'rejected': 'ปฏิเสธ',
+                            'fulfilled': 'จ่ายแล้ว'
+                        };
+
+                        let html = `
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <h6 class="mb-1">
+                                        <strong>เลขที่คำขอ:</strong> ${request.request_number}
+                                    </h6>
+                                    <p class="mb-0 text-muted">
+                                        <i class="fas fa-calendar me-1"></i>
+                                        ${new Date(request.request_date).toLocaleDateString('th-TH')}
+                                    </p>
+                                </div>
+                                <div class="col-md-6 text-end">
+                                    <span class="badge bg-${statusColors[request.status]}">
+                                        ${statusTexts[request.status]}
+                                    </span>
+                                </div>
+                            </div>
+                            
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <strong>Job:</strong> ${request.job_number}
+                                </div>
+                                <div class="col-md-6">
+                                    <strong>สินค้า:</strong> ${request.product_name}
+                                </div>
+                            </div>
+                            
+                            ${request.approved_by_name ? `
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <strong>${request.status === 'approved' || request.status === 'fulfilled' ? 'อนุมัติโดย' : 'ปฏิเสธโดย'}:</strong> ${request.approved_by_name}
+                                    </div>
+                                    <div class="col-md-6">
+                                        <strong>วันที่:</strong> ${new Date(request.approved_date).toLocaleDateString('th-TH')}
+                                    </div>
+                                </div>
+                            ` : ''}
+                            
+                            <div class="mb-3">
+                                <h6><i class="fas fa-list me-2"></i>รายการวัสดุ (${details.length} รายการ)</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm">
+                                        <thead class="table-light">
+                                            <tr>
+                                                    <th>รหัสวัสดุ</th>
+                                                    <th>ชื่อวัสดุ</th>
+                                                    <th>หน่วย</th>
+                                                    <th class="text-end">จำนวน</th>
+                                                    <th class="text-center">การ์ด</th>
+                                                    <th class="text-end">สถานะสต็อก</th>
+                                                </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${details.map(detail => {
+                                                const qtyReq = Number(detail.quantity_requested || 0);
+                                                const qtyPerCard = Number(detail.quantity_per_card || detail.quantity_per_unit || 1);
+                                                const totalCards = Math.ceil(qtyReq / Math.max(1, qtyPerCard));
+                                                const cardColor = detail.card_color || '#3498db';
+                                                return `
+                                                <tr>
+                                                    <td>${detail.part_code}</td>
+                                                    <td>${detail.material_name}</td>
+                                                    <td>${detail.unit}</td>
+                                                    <td class="text-end">${qtyReq.toLocaleString()}</td>
+                                                    <td class="text-center">
+                                                        <div style="display:inline-block; width: 45px; height: 45px; background-color: ${cardColor}; border: 2px solid #ddd; border-radius: 6px; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+                                                            <span style="color: white; font-weight: bold; text-shadow: 0 1px 1px rgba(0,0,0,0.3); font-size:14px;">${totalCards}</span>
+                                                            <span style="color: white; font-weight:500; font-size:8px;">ใบ</span>
+                                                        </div>
+                                                    </td>
+                                                    <td class="text-end">
+                                                        <small class="badge bg-${detail.current_stock >= detail.quantity_requested ? 'success' : 'warning'}">
+                                                            ${detail.current_stock} / ${detail.quantity_requested}
+                                                        </small>
+                                                    </td>
+                                                </tr>
+                                            `}).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            
+                            ${request.notes ? `
+                                <div class="mb-3 p-3 bg-light rounded">
+                                    <strong>หมายเหตุ:</strong><br>
+                                    <small>${request.notes.replace(/\n/g, '<br>')}</small>
+                                </div>
+                            ` : ''}
+                        `;
+                        
+                        document.getElementById('requestDetailsContent').innerHTML = html;
+                        new bootstrap.Modal(document.getElementById('requestDetailsModal')).show();
+                    } else {
+                        Swal.fire('เกิดข้อผิดพลาด', data.message || 'ไม่สามารถโหลดข้อมูลได้', 'error');
+                    }
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถโหลดรายละเอียดได้', 'error');
+                    Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถโหลดข้อมูลได้', 'error');
                 });
         }
 

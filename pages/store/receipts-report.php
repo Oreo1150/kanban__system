@@ -1,27 +1,28 @@
 <?php
-// pages/store/material-out.php (report view)
-$page_title = 'รายงานการจ่ายวัสดุ (Issuances)';
+// pages/store/receipts-report.php
+$page_title = 'รายงานการรับวัสดุ (Receipts)';
 $breadcrumbs = [
     ['text' => 'หน้าแรก', 'url' => 'dashboard.php'],
-    ['text' => 'รายงานจ่ายออก']
+    ['text' => 'รายงานรับเข้า']
 ];
 
 require_once '../../config/config.php';
 require_once '../../config/database.php';
 
+// Ensure user is authorized before exporting
 checkRole(['store','admin']);
 
 $database = new Database();
 $db = $database->getConnection();
 
-// Handle CSV export before any HTML output
+// If exporting CSV, handle before any HTML output
 if (isset($_GET['export']) && $_GET['export'] === 'csv') {
     $search = trim($_GET['search'] ?? '');
     $material_id = (int)($_GET['material_id'] ?? 0);
     $start_date = $_GET['start_date'] ?? '';
     $end_date = $_GET['end_date'] ?? '';
 
-    $where = ["it.transaction_type = 'out'"];
+    $where = ["it.transaction_type = 'in'"];
     $params = [];
     if ($search !== '') {
         $where[] = "(m.part_code LIKE ? OR m.material_name LIKE ? OR it.notes LIKE ? OR it.reference_type LIKE ?)";
@@ -45,15 +46,15 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
 
     $where_clause = implode(' AND ', $where);
 
-    $q = "SELECT it.*, m.part_code, m.material_name, m.unit, u.full_name as issued_by FROM inventory_transactions it LEFT JOIN materials m ON it.material_id = m.material_id LEFT JOIN users u ON it.transaction_by = u.user_id WHERE $where_clause ORDER BY it.transaction_date DESC";
+    $q = "SELECT it.*, m.part_code, m.material_name, m.unit, u.full_name as received_by FROM inventory_transactions it LEFT JOIN materials m ON it.material_id = m.material_id LEFT JOIN users u ON it.transaction_by = u.user_id WHERE $where_clause ORDER BY it.transaction_date DESC";
     $stmt = $db->prepare($q);
     $stmt->execute($params);
     $rows = $stmt->fetchAll();
 
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename=issuances_report.csv');
+    header('Content-Disposition: attachment; filename=receipts_report.csv');
     $out = fopen('php://output', 'w');
-    fputcsv($out, ['วันที่', 'รหัส', 'ชื่อวัสดุ', 'จำนวน', 'หน่วย', 'ประเภท', 'อ้างอิง', 'หมายเหตุ', 'ผู้เบิก']);
+    fputcsv($out, ['วันที่', 'รหัส', 'ชื่อวัสดุ', 'จำนวน', 'หน่วย', 'ประเภท', 'หมายเหตุ', 'ผู้รับเข้า']);
     foreach ($rows as $r) {
         fputcsv($out, [
             $r['transaction_date'],
@@ -62,15 +63,15 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
             $r['quantity'],
             $r['unit'] ?? '',
             $r['reference_type'] ?? '',
-            $r['reference_code'] ?? '',
             $r['notes'] ?? '',
-            $r['issued_by'] ?? ''
+            $r['received_by'] ?? ''
         ]);
     }
     fclose($out);
     exit;
 }
 
+// Now include header and sidebar for normal page rendering
 require_once '../../includes/header.php';
 require_once '../../includes/sidebar.php';
 
@@ -79,6 +80,7 @@ $search = trim($_GET['search'] ?? '');
 $material_id = (int)($_GET['material_id'] ?? 0);
 $start_date = $_GET['start_date'] ?? '';
 $end_date = $_GET['end_date'] ?? '';
+$export = $_GET['export'] ?? '';
 
 $page = max(1, (int)($_GET['page'] ?? 1));
 $limit = (int)($_GET['limit'] ?? 25);
@@ -87,7 +89,7 @@ $offset = ($page - 1) * $limit;
 // materials for filter
 $materials = $db->query("SELECT material_id, part_code, material_name FROM materials WHERE status = 'active' ORDER BY part_code")->fetchAll();
 
-$where = ["it.transaction_type = 'out'"];
+$where = ["it.transaction_type = 'in'"];
 $params = [];
 if ($search !== '') {
     $where[] = "(m.part_code LIKE ? OR m.material_name LIKE ? OR it.notes LIKE ? OR it.reference_type LIKE ?)";
@@ -111,13 +113,40 @@ if ($end_date) {
 
 $where_clause = implode(' AND ', $where);
 
+// If exporting CSV, fetch all matching rows (no pagination)
+if ($export === 'csv') {
+    $q = "SELECT it.*, m.part_code, m.material_name, m.unit, u.full_name as received_by FROM inventory_transactions it LEFT JOIN materials m ON it.material_id = m.material_id LEFT JOIN users u ON it.transaction_by = u.user_id WHERE $where_clause ORDER BY it.transaction_date DESC";
+    $stmt = $db->prepare($q);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll();
+
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename=receipts_report.csv');
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['วันที่', 'รหัส', 'ชื่อวัสดุ', 'จำนวน', 'หน่วย', 'ประเภท', 'หมายเหตุ', 'ผู้รับเข้า']);
+    foreach ($rows as $r) {
+        fputcsv($out, [
+            $r['transaction_date'],
+            $r['part_code'] ?? '',
+            $r['material_name'] ?? '',
+            $r['quantity'],
+            $r['unit'] ?? '',
+            $r['reference_type'] ?? '',
+            $r['notes'] ?? '',
+            $r['received_by'] ?? ''
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
 // total count
 $count_q = "SELECT COUNT(*) FROM inventory_transactions it LEFT JOIN materials m ON it.material_id = m.material_id WHERE $where_clause";
 $count_stmt = $db->prepare($count_q);
 $count_stmt->execute($params);
 $total = (int)$count_stmt->fetchColumn();
 
-$q = "SELECT it.*, m.part_code, m.material_name, m.unit, u.full_name as issued_by
+$q = "SELECT it.*, m.part_code, m.material_name, m.unit, u.full_name as received_by
       FROM inventory_transactions it
       LEFT JOIN materials m ON it.material_id = m.material_id
       LEFT JOIN users u ON it.transaction_by = u.user_id
@@ -125,7 +154,7 @@ $q = "SELECT it.*, m.part_code, m.material_name, m.unit, u.full_name as issued_b
       ORDER BY it.transaction_date DESC
       LIMIT ? OFFSET ?";
 $stmt = $db->prepare($q);
-// bind params then limit/offset
+// Bind existing params (if any), then bind LIMIT and OFFSET as integers
 $bindIndex = 1;
 foreach ($params as $p) {
     $stmt->bindValue($bindIndex++, $p);
@@ -134,6 +163,7 @@ $stmt->bindValue($bindIndex++, (int)$limit, PDO::PARAM_INT);
 $stmt->bindValue($bindIndex++, (int)$offset, PDO::PARAM_INT);
 $stmt->execute();
 $rows = $stmt->fetchAll();
+
 ?>
 
             <div class="row mb-3">
@@ -179,9 +209,8 @@ $rows = $stmt->fetchAll();
                                 <th>จำนวน</th>
                                 <th>หน่วย</th>
                                 <th>ประเภท</th>
-                                <th>อ้างอิง</th>
                                 <th>หมายเหตุ</th>
-                                <th>ผู้เบิก</th>
+                                <th>ผู้รับเข้า</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -194,13 +223,12 @@ $rows = $stmt->fetchAll();
                                         <td><?= htmlspecialchars($r['quantity']) ?></td>
                                         <td><?= htmlspecialchars($r['unit'] ?? '') ?></td>
                                         <td><?= htmlspecialchars($r['reference_type'] ?? '') ?></td>
-                                        <td><?= htmlspecialchars($r['reference_code'] ?? '') ?></td>
                                         <td><?= htmlspecialchars($r['notes'] ?? '') ?></td>
-                                        <td><?= htmlspecialchars($r['issued_by'] ?? '') ?></td>
+                                        <td><?= htmlspecialchars($r['received_by'] ?? '') ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr><td colspan="9" class="text-center text-muted">ไม่พบข้อมูล</td></tr>
+                                <tr><td colspan="8" class="text-center text-muted">ไม่พบข้อมูล</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
@@ -218,4 +246,3 @@ $rows = $stmt->fetchAll();
             </div>
 
 <?php require_once '../../includes/footer.php'; ?>
-

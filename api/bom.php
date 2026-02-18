@@ -33,6 +33,8 @@ try {
                 SELECT 
                     bd.material_id,
                     bd.quantity_per_unit,
+                    bd.card_color,
+                    bd.quantity_per_card,
                     m.part_code,
                     m.material_name,
                     m.description,
@@ -74,6 +76,9 @@ try {
                     $insufficient_count++;
                 }
                 
+                $card_color = $item['card_color'] ?? '#3498db';
+                $quantity_per_card = $item['quantity_per_card'] ?? 1;
+                
                 $materials[] = [
                     'material_id' => (int)$item['material_id'],
                     'part_code' => $item['part_code'],
@@ -87,7 +92,9 @@ try {
                     'max_stock' => (float)$item['max_stock'],
                     'location' => $item['location'],
                     'is_sufficient' => $is_sufficient,
-                    'shortage' => !$is_sufficient ? round($required_quantity - $item['current_stock'], 2) : 0
+                    'shortage' => !$is_sufficient ? round($required_quantity - $item['current_stock'], 2) : 0,
+                    'card_color' => $card_color,
+                    'quantity_per_card' => (int)$quantity_per_card
                 ];
             }
             
@@ -205,41 +212,68 @@ try {
                 $existing_bom = $check_bom_stmt->fetch();
                 
                 if ($existing_bom) {
-                    throw new Exception('สินค้านี้มี BOM (ID: ' . $existing_bom['bom_id'] . ') ที่ใช้งานอยู่แล้ว กรุณาแก้ไข BOM เดิม หรือเปลี่ยน Version');
+                    // ถ้ามี BOM active จะอัพเดทแทน
+                    $bom_id = (int)$existing_bom['bom_id'];
+                    $is_update = true;
+                } else {
+                    // สร้าง BOM Header ใหม่
+                    $header_query = "INSERT INTO bom_header (product_id, version, created_by, status, created_at) VALUES (?, ?, ?, 'active', NOW())";
+                    $stmt = $db->prepare($header_query);
+                    $stmt->execute([$product_id, $version, $_SESSION['user_id']]);
+                    $bom_id = (int)$db->lastInsertId();
+                    $is_update = false;
                 }
                 
-                // สร้าง BOM Header
-                $header_query = "INSERT INTO bom_header (product_id, version, created_by, status, created_at) VALUES (?, ?, ?, 'active', NOW())";
-                $stmt = $db->prepare($header_query);
-                $stmt->execute([$product_id, $version, $_SESSION['user_id']]);
-                $bom_id = (int)$db->lastInsertId();
+                // ลบรายการวัสดุเดิม
+                if ($is_update) {
+                    $delete_query = "DELETE FROM bom_detail WHERE bom_id = ?";
+                    $stmt = $db->prepare($delete_query);
+                    $stmt->execute([$bom_id]);
+                }
                 
-                // สร้าง BOM Details
+                // เพิ่มรายการวัสดุใหม่
                 $detail_count = 0;
                 foreach ($materials as $material) {
                     if (!isset($material['material_id']) || !isset($material['quantity_per_unit'])) {
                         throw new Exception('ข้อมูลวัสดุไม่ครบถ้วน');
                     }
                     
-                    $detail_query = "INSERT INTO bom_detail (bom_id, material_id, quantity_per_unit, unit) VALUES (?, ?, ?, ?)";
+                    $card_color = $material['card_color'] ?? '#3498db';
+                    $quantity_per_card = $material['quantity_per_card'] ?? 1;
+                    
+                    $detail_query = "INSERT INTO bom_detail (bom_id, material_id, quantity_per_unit, unit, card_color, quantity_per_card) VALUES (?, ?, ?, ?, ?, ?)";
                     $stmt = $db->prepare($detail_query);
                     $stmt->execute([
                         $bom_id,
                         (int)$material['material_id'],
                         (float)$material['quantity_per_unit'],
-                        $material['unit'] ?? null
+                        $material['unit'] ?? null,
+                        $card_color,
+                        (int)$quantity_per_card
                     ]);
                     $detail_count++;
                 }
                 
+                // อัพเดทวันที่แก้ไขสำหรับ update
+                if ($is_update) {
+                    $update_date_query = "UPDATE bom_header SET updated_at = CURRENT_TIMESTAMP WHERE bom_id = ?";
+                    $stmt = $db->prepare($update_date_query);
+                    $stmt->execute([$bom_id]);
+                }
+                
                 $db->commit();
+                
+                $message = $is_update ? 
+                    'อัพเดท BOM เรียบร้อยแล้ว (แก้ไขวัสดุ ' . $detail_count . ' รายการ)' :
+                    'สร้าง BOM เรียบร้อยแล้ว (เพิ่มวัสดุ ' . $detail_count . ' รายการ)';
                 
                 echo json_encode([
                     'success' => true, 
-                    'message' => 'สร้าง BOM เรียบร้อยแล้ว (เพิ่มวัสดุ ' . $detail_count . ' รายการ)', 
+                    'message' => $message, 
                     'bom_id' => $bom_id,
                     'product_id' => $product_id,
-                    'material_count' => $detail_count
+                    'material_count' => $detail_count,
+                    'is_update' => $is_update
                 ]);
                 
             } catch (Exception $e) {
@@ -314,13 +348,18 @@ try {
             
             // เพิ่มรายการใหม่
             foreach ($materials as $material) {
-                $detail_query = "INSERT INTO bom_detail (bom_id, material_id, quantity_per_unit, unit) VALUES (?, ?, ?, ?)";
+                $card_color = $material['card_color'] ?? '#3498db';
+                $quantity_per_card = $material['quantity_per_card'] ?? 1;
+                
+                $detail_query = "INSERT INTO bom_detail (bom_id, material_id, quantity_per_unit, unit, card_color, quantity_per_card) VALUES (?, ?, ?, ?, ?, ?)";
                 $stmt = $db->prepare($detail_query);
                 $stmt->execute([
                     $bom_id,
                     $material['material_id'],
                     $material['quantity_per_unit'],
-                    $material['unit'] ?? null
+                    $material['unit'] ?? null,
+                    $card_color,
+                    (int)$quantity_per_card
                 ]);
             }
             

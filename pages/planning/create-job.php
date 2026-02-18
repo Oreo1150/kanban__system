@@ -296,6 +296,13 @@ try {
         color: #721c24;
     }
 
+    /* Table row selection */
+    .product-row.selected {
+        background: rgba(102,126,234,0.08);
+    }
+
+    .product-row { cursor: pointer; }
+
     .navigation-buttons {
         display: flex;
         justify-content: space-between;
@@ -383,40 +390,40 @@ try {
             </div>
             <div class="card-body">
                 <?php if (!empty($products)): ?>
-                    <div class="row">
-                        <?php foreach ($products as $product): ?>
-                            <div class="col-lg-4 col-md-6 mb-4">
-                                <div class="product-card" onclick="selectProduct(<?= $product['product_id'] ?>, '<?= htmlspecialchars($product['product_name']) ?>', '<?= htmlspecialchars($product['product_code']) ?>', <?= $product['has_bom'] ?>)">
-                                    <div class="bom-status <?= $product['has_bom'] ? 'bom-available' : 'bom-missing' ?>">
-                                        <?= $product['has_bom'] ? '✓ มี BOM' : '✗ ไม่มี BOM' ?>
-                                    </div>
-                                    <div class="check-icon">
-                                        <i class="fas fa-check"></i>
-                                    </div>
-
-                                    <div class="text-center mb-3">
-                                        <div class="product-icon mb-3">
-                                            <i class="fas fa-cube fa-3x text-primary"></i>
-                                        </div>
-                                        <h6 class="mb-1"><?= htmlspecialchars($product['product_name']) ?></h6>
-                                        <small class="text-muted"><?= htmlspecialchars($product['product_code']) ?></small>
-                                    </div>
-
-                                    <?php if (!empty($product['description'])): ?>
-                                        <p class="text-muted small mb-0">
-                                            <?= htmlspecialchars(mb_substr($product['description'], 0, 80)) ?>
-                                            <?= mb_strlen($product['description']) > 80 ? '...' : '' ?>
-                                        </p>
-                                    <?php endif; ?>
-
-                                    <?php if (!$product['has_bom']): ?>
-                                        <div class="alert alert-warning mt-3 py-2 mb-0">
-                                            <small><i class="fas fa-exclamation-triangle me-1"></i>ยังไม่มี BOM ไม่สามารถคำนวณวัสดุได้</small>
-                                        </div>
-                                    <?php endif; ?>
-                                </div>
-                            </div>
-                        <?php endforeach; ?>
+                    <div class="mb-3">
+                        <input type="text" id="productSearch" class="form-control" placeholder="ค้นหาสินค้า (ชื่อ หรือ รหัส)" oninput="filterProducts()">
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover" id="productsTable">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 60px;">BOM</th>
+                                    <th>รหัส</th>
+                                    <th>ชื่อสินค้า</th>
+                                    <th>คำอธิบาย</th>
+                                    <th style="width:120px;">การเลือก</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($products as $product): ?>
+                                    <tr class="product-row" onclick="selectProductRow(this.querySelector('button'))" data-product-id="<?= $product['product_id'] ?>" data-product-name="<?= htmlspecialchars($product['product_name'], ENT_QUOTES) ?>" data-product-code="<?= htmlspecialchars($product['product_code'], ENT_QUOTES) ?>" data-has-bom="<?= $product['has_bom'] ?>">
+                                        <td>
+                                            <?php if ($product['has_bom']): ?>
+                                                <span class="badge bg-success">มี BOM</span>
+                                            <?php else: ?>
+                                                <span class="badge bg-danger">ไม่มี BOM</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><?= htmlspecialchars($product['product_code']) ?></td>
+                                        <td><?= htmlspecialchars($product['product_name']) ?></td>
+                                        <td><small class="text-muted"><?= htmlspecialchars(mb_substr($product['description'] ?? '', 0, 120)) ?><?= !empty($product['description']) && mb_strlen($product['description']) > 120 ? '...' : '' ?></small></td>
+                                        <td>
+                                            <button type="button" class="btn btn-primary btn-sm" onclick="selectProductRow(this)">เลือก</button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
                     </div>
 
                     <input type="hidden" id="selected_product_id" name="product_id">
@@ -515,19 +522,10 @@ try {
                                 <i class="fas fa-user-cog me-1"></i>
                                 ผู้รับผิดชอบ <span class="text-danger">*</span>
                             </label>
-                            <select class="form-control form-control-lg" id="assigned_to" name="assigned_to" required>
-                                <option value="">เลือกผู้รับผิดชอบ</option>
-                                <?php foreach ($production_users as $user): ?>
-                                    <option value="<?= $user['user_id'] ?>">
-                                        <?= htmlspecialchars($user['full_name']) ?>
-                                        <?php if ($user['active_jobs'] > 0): ?>
-                                            <small>(กำลังทำ <?= $user['active_jobs'] ?> งาน)</small>
-                                        <?php else: ?>
-                                            <small>(ว่าง)</small>
-                                        <?php endif; ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
+                            <!-- Replaced dropdown with free-text input for responsible person -->
+                            <input type="text" class="form-control form-control-lg" id="assigned_to_input" name="assigned_to_name" required placeholder="พิมพ์ชื่อผู้รับผิดชอบ">
+                            <!-- keep a hidden numeric assigned_to for compatibility with API (empty = unassigned/production queue) -->
+                            <input type="hidden" id="assigned_to" name="assigned_to" value="">
                         </div>
                     </div>
 
@@ -749,12 +747,14 @@ try {
 
     function selectProduct(productId, productName, productCode, hasBom) {
         // Remove previous selections
-        document.querySelectorAll('.product-card').forEach(card => {
-            card.classList.remove('selected');
+        // Remove previous selections (cards or table rows)
+        document.querySelectorAll('.product-card, .product-row').forEach(el => {
+            el.classList.remove('selected');
         });
 
-        // Select current product
-        event.currentTarget.classList.add('selected');
+        // Add selected class to corresponding table row if exists
+        const row = document.querySelector(`.product-row[data-product-id="${productId}"]`);
+        if (row) row.classList.add('selected');
 
         // Store selection
         selectedProductId = productId;
@@ -775,6 +775,15 @@ try {
 
         // Enable next button
         document.getElementById('btn-next').disabled = false;
+    }
+
+    function selectProductRow(el) {
+        const row = el.closest('tr');
+        const pid = row.getAttribute('data-product-id');
+        const pname = row.getAttribute('data-product-name');
+        const pcode = row.getAttribute('data-product-code');
+        const hasBom = row.getAttribute('data-has-bom');
+        selectProduct(pid, pname, pcode, hasBom);
     }
 
     function nextStep() {
@@ -813,13 +822,13 @@ try {
                 }
                 break;
 
-            case 2:
-                const requiredFields = ['quantity_planned', 'start_date', 'end_date', 'assigned_to'];
+                case 2:
+                const requiredFields = ['quantity_planned', 'start_date', 'end_date', 'assigned_to_input'];
                 for (const field of requiredFields) {
                     const element = document.getElementById(field);
-                    if (!element.value.trim()) {
-                        element.focus();
-                        Swal.fire('กรุณากรอกข้อมูล', `กรุณากรอก${element.previousElementSibling.textContent}`, 'warning');
+                    if (!element || !element.value.trim()) {
+                        if (element) element.focus();
+                        Swal.fire('กรุณากรอกข้อมูล', `กรุณากรอก${element && element.previousElementSibling ? element.previousElementSibling.textContent : ''}`, 'warning');
                         return false;
                     }
                 }
@@ -895,6 +904,19 @@ try {
         document.getElementById(`form-step-${currentStep}`).classList.add('active');
     }
 
+    function filterProducts() {
+        const term = document.getElementById('productSearch').value.toLowerCase();
+        document.querySelectorAll('#productsTable tbody tr').forEach(row => {
+            const name = row.getAttribute('data-product-name') || '';
+            const code = row.getAttribute('data-product-code') || '';
+            if (name.toLowerCase().includes(term) || code.toLowerCase().includes(term)) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+    }
+
     function calculateMaterials() {
         if (!selectedHasBom) {
             document.getElementById('material-calculation').innerHTML = `
@@ -918,31 +940,45 @@ try {
 
         const quantity = document.getElementById('quantity_planned').value;
 
-        fetch(`../../api/bom.php?action=calculate&product_id=${selectedProductId}&quantity=${quantity}`)
-            .then(response => response.json())
-            .then(data => {
+        fetch(`../../api/bom.php?action=get_materials&product_id=${selectedProductId}&quantity=${quantity}`)
+            .then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => { throw new Error('Server error ' + response.status + ': ' + text); });
+                }
+                return response.text();
+            })
+            .then(text => {
+                // Try parse JSON, otherwise show raw response
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    throw new Error('Invalid JSON response from BOM API: ' + text);
+                }
+
                 if (data.success) {
                     materialRequirements = data.materials;
                     displayMaterialRequirements();
                     checkStockAvailability();
                 } else {
                     document.getElementById('material-calculation').innerHTML = `
-                            <div class="alert alert-danger">
-                                <i class="fas fa-exclamation-triangle me-2"></i>
-                                <h5>เกิดข้อผิดพลาด</h5>
-                                <p>${data.message}</p>
-                            </div>
-                        `;
-                }
-            })
-            .catch(error => {
-                document.getElementById('material-calculation').innerHTML = `
                         <div class="alert alert-danger">
                             <i class="fas fa-exclamation-triangle me-2"></i>
                             <h5>เกิดข้อผิดพลาด</h5>
-                            <p>ไม่สามารถคำนวณความต้องการวัสดุได้</p>
+                            <p>${data.message || 'ไม่สามารถคำนวณความต้องการวัสดุได้'}</p>
                         </div>
                     `;
+                }
+            })
+            .catch(error => {
+                console.error('BOM API error:', error);
+                document.getElementById('material-calculation').innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <h5>เกิดข้อผิดพลาด</h5>
+                        <p>${error.message}</p>
+                    </div>
+                `;
             });
     }
 
@@ -955,22 +991,47 @@ try {
                 <h6 class="mb-3"><i class="fas fa-list me-2"></i>รายการวัสดุที่ต้องใช้</h6>
             `;
 
+        let totalCardsAllMaterials = 0;
+        let cardsDisplay = [];
+
         materialRequirements.forEach(material => {
+            const cardColor = material.card_color || '#3498db';
+            const quantityPerCard = material.quantity_per_card || material.quantity_per_unit || 1;
+            const totalCards = Math.ceil((material.required_quantity || 0) / quantityPerCard);
+            const displayQuantity = totalCards;
+            const displayUnit = 'ใบ';
+
+            totalCardsAllMaterials += totalCards;
+            cardsDisplay.push({
+                color: cardColor,
+                count: totalCards,
+                name: material.material_name
+            });
+
+            const qtyPerUnit = material.quantity_per_unit || 1;
+            const plannedQty = parseInt(document.getElementById('quantity_planned').value) || 0;
+
             html += `
                     <div class="material-requirement">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
+                        <div class="d-flex justify-content-between align-items-start gap-3">
+                            <div style="flex: 1;">
                                 <h6 class="mb-1">
                                     <span class="stock-indicator" id="stock-${material.material_id}"></span>
                                     ${material.part_code} - ${material.material_name}
                                 </h6>
                                 <small class="text-muted">
-                                    ${material.quantity_per_unit} ${material.unit}/ชิ้น × ${document.getElementById('quantity_planned').value} ชิ้น
+                                    ${qtyPerUnit} ${material.unit}/ชิ้น × ${plannedQty} ชิ้น = ${material.required_quantity.toLocaleString()} ${material.unit}
                                 </small>
+                                    <div style="margin-top: 6px; font-size: 0.85rem; color: #666;">
+                                    <i class="fas fa-info-circle" style="color: ${cardColor};"></i> 1 ใบการ์ด = ${quantityPerCard} ${material.unit}
+                                </div>
                             </div>
-                            <div class="text-end">
-                                <span class="badge bg-primary fs-6">${material.required_quantity.toLocaleString()}</span>
-                                <div class="small text-muted">${material.unit}</div>
+                            <div style="text-align: center; min-width: 140px;">
+                                <div style="width: 80px; height: 100px; background-color: ${cardColor}; border: 3px solid #ddd; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin: 0 auto 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
+                                    <span style="color: white; font-weight: bold; text-shadow: 0 1px 1px rgba(0,0,0,0.3); font-size: 28px; line-height: 1;">${displayQuantity}</span>
+                                    <span style="color: white; font-weight: 500; text-shadow: 0 1px 1px rgba(0,0,0,0.3); font-size: 12px; margin-top: 4px;">${displayUnit}</span>
+                                </div>
+                                <small class="text-muted d-block">ต้องใช้</small>
                             </div>
                         </div>
                         <div class="mt-2">
@@ -980,6 +1041,33 @@ try {
                     </div>
                 `;
         });
+
+        // เพิ่มสรุปการ์ดทั้งหมด
+        html += `
+                <hr class="my-4">
+                <h6 class="mb-3"><i class="fas fa-th-large me-2"></i>สรุปการ์ดทั้งหมด</h6>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start;">
+        `;
+
+        cardsDisplay.forEach(card => {
+            html += `
+                    <div style="text-align: center;">
+                        <div style="width: 70px; height: 90px; background-color: ${card.color}; border: 3px solid #ddd; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
+                            <span style="color: white; font-weight: bold; text-shadow: 0 1px 1px rgba(0,0,0,0.3); font-size: 24px;">${card.count}</span>
+                            <span style="color: white; font-weight: 500; text-shadow: 0 1px 1px rgba(0,0,0,0.3); font-size: 10px; margin-top: 3px;">ใบ</span>
+                        </div>
+                        <small style="display: block; color: #333; max-width: 70px; word-wrap: break-word; font-size: 11px;">${card.name}</small>
+                    </div>
+            `;
+        });
+
+        html += `
+                </div>
+                <div class="alert alert-success mt-4">
+                    <i class="fas fa-check-circle me-2"></i>
+                    <strong>จำนวนการ์ดทั้งหมด: ${totalCardsAllMaterials} ใบ</strong>
+                </div>
+        `;
 
         document.getElementById('material-calculation').innerHTML = html;
         document.getElementById('material-results').style.display = 'block';
@@ -1046,8 +1134,8 @@ try {
         // Update job summary
         const product = `${selectedProductName} (${selectedProductCode})`;
         const quantity = parseInt(document.getElementById('quantity_planned').value).toLocaleString();
-        const assignedSelect = document.getElementById('assigned_to');
-        const assigned = assignedSelect.options[assignedSelect.selectedIndex].text;
+        const assignedInput = document.getElementById('assigned_to_input');
+        const assigned = assignedInput ? assignedInput.value.trim() : '';
         const startDate = new Date(document.getElementById('start_date').value).toLocaleDateString('th-TH');
         const endDate = new Date(document.getElementById('end_date').value).toLocaleDateString('th-TH');
         const prioritySelect = document.getElementById('priority');
@@ -1055,7 +1143,7 @@ try {
 
         document.getElementById('summary-product').textContent = product;
         document.getElementById('summary-quantity').textContent = quantity + ' ชิ้น';
-        document.getElementById('summary-assigned').textContent = assigned;
+        document.getElementById('summary-assigned').textContent = assigned || '-';
         document.getElementById('summary-start-date').textContent = startDate;
         document.getElementById('summary-end-date').textContent = endDate;
         document.getElementById('summary-priority').innerHTML =
@@ -1079,6 +1167,7 @@ try {
                                     <th>ชื่อวัสดุ</th>
                                     <th class="text-end">ต่อชิ้น</th>
                                     <th class="text-end">ต้องการ</th>
+                                    <th class="text-center">การ์ด</th>
                                     <th class="text-end">คงเหลือ</th>
                                     <th class="text-center">สถานะ</th>
                                 </tr>
@@ -1087,6 +1176,7 @@ try {
                 `;
 
             let allSufficient = true;
+            let totalCardsInJob = 0;
 
             materialRequirements.forEach(m => {
                 // Find corresponding stock entry (may be undefined if check not finished)
@@ -1094,6 +1184,12 @@ try {
                 const requiredTotal = (m.required_quantity !== undefined) ? m.required_quantity : (m.quantity_per_unit * plannedQty);
                 const currentStock = stock && stock.current_stock !== undefined ? stock.current_stock : null;
                 const sufficient = stock ? !!stock.sufficient : false;
+                
+                // Card calculation
+                const cardColor = m.card_color || '#3498db';
+                const quantityPerUnit = m.quantity_per_unit || 1;
+                const totalCards = Math.ceil(requiredTotal / quantityPerUnit);
+                totalCardsInJob += totalCards;
 
                 if (!sufficient) allSufficient = false;
 
@@ -1106,6 +1202,14 @@ try {
                         <td>${m.material_name}</td>
                         <td class="text-end">${m.quantity_per_unit}</td>
                         <td class="text-end">${requiredTotal.toLocaleString()} ${m.unit}</td>
+                        <td class="text-center">
+                            <div style="display: inline-flex; align-items: center; gap: 6px;">
+                                <div style="width: 50px; height: 50px; background-color: ${cardColor}; border: 2px solid #ddd; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                                    <span style="color: white; font-weight: bold; text-shadow: 0 1px 1px rgba(0,0,0,0.2); font-size: 14px;">${totalCards}</span>
+                                    <span style="color: white; font-weight: 500; text-shadow: 0 1px 1px rgba(0,0,0,0.2); font-size: 8px;">ใบ</span>
+                                </div>
+                            </div>
+                        </td>
                         <td class="text-end">${currentStock !== null ? currentStock.toLocaleString() + ' ' + m.unit : '<span class="text-muted">-</span>'}</td>
                         <td class="text-center ${statusClass}"><strong>${statusText}</strong></td>
                     </tr>
@@ -1115,6 +1219,10 @@ try {
             combinedHtml += `
                             </tbody>
                         </table>
+                    </div>
+                    <div class="alert alert-info mt-3">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>จำนวนการ์ดรวมทั้งสิ้น: ${totalCardsInJob} ใบ</strong>
                     </div>
                 `;
 
@@ -1205,6 +1313,11 @@ try {
         formData.append('action', 'create');
         formData.append('material_requirements', JSON.stringify(materialRequirements));
         formData.append('stock_availability', JSON.stringify(stockAvailability));
+        // Append free-text assigned name so API can record it; keep numeric assigned_to as 0 (unassigned -> production queue)
+        const assignedName = document.getElementById('assigned_to_input') ? document.getElementById('assigned_to_input').value.trim() : '';
+        formData.append('assigned_to_name', assignedName);
+        // Do not send numeric assigned_to=0 (would violate FK). Remove the field so backend treats it as NULL.
+        formData.delete('assigned_to');
 
         // Show loading
         Swal.fire({

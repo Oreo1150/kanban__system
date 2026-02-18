@@ -19,6 +19,16 @@ $db = $database->getConnection();
 $user_role = getUserRole();
 $user_id = $_SESSION['user_id'];
 
+// Filter
+$filter = $_GET['filter'] ?? 'all';
+$search = $_GET['search'] ?? '';
+// Pagination / page length
+$allowed_limits = [10, 25, 50, 100];
+$limit = (int)($_GET['limit'] ?? 25);
+if (!in_array($limit, $allowed_limits)) $limit = 25;
+$page = max(1, (int)($_GET['page'] ?? 1));
+$offset = ($page - 1) * $limit;
+
 // สร้าง WHERE clause ตาม role
 $where_clause = "1=1";
 $params = [];
@@ -30,8 +40,26 @@ if ($user_role === 'production') {
     $params[] = "%" . $_SESSION['full_name'] . "%";
 }
 
+// Filter by status
+if ($filter !== 'all') {
+    if ($filter === 'overdue') {
+        $where_clause .= " AND DATEDIFF(pj.end_date, CURDATE()) < 0 AND pj.status IN ('pending', 'in_progress')";
+    } else {
+        $where_clause .= " AND pj.status = ?";
+        $params[] = $filter;
+    }
+}
+
+// Search
+if (!empty($search)) {
+    $where_clause .= " AND (pj.job_number LIKE ? OR p.product_name LIKE ? OR pj.assigned_to_name LIKE ?)";
+    $params[] = "%$search%";
+    $params[] = "%$search%";
+    $params[] = "%$search%";
+}
+
 // ดึงข้อมูลงาน
-$jobs = $db->prepare("
+$jobs_query = "
     SELECT pj.*, 
            p.product_name, 
            p.product_code,
@@ -55,12 +83,35 @@ $jobs = $db->prepare("
             WHEN 'cancelled' THEN 4
         END,
         pj.created_at DESC
-");
-$jobs->execute($params);
-$all_jobs = $jobs->fetchAll();
+        LIMIT {$limit} OFFSET {$offset}
+    ";
+
+$jobs_stmt = $db->prepare($jobs_query);
+$jobs_stmt->execute($params);
+$all_jobs = $jobs_stmt->fetchAll();
+
+// Total count for pagination
+$count_query = "SELECT COUNT(*) as total FROM production_jobs pj WHERE $where_clause";
+$count_stmt = $db->prepare($count_query);
+$count_stmt->execute($params);
+$total_jobs = (int)$count_stmt->fetchColumn();
+$total_pages = $limit > 0 ? ceil($total_jobs / $limit) : 1;
 
 // สถิติ
-$stats = $db->prepare("
+$stats_where = $where_clause;
+$stats_params = $params;
+if ($filter !== 'all') {
+    // สำหรับสถิติ ให้ดึงทั้งหมด
+    if ($user_role === 'production') {
+        $stats_where = "(pj.assigned_to = ? OR pj.assigned_to_name LIKE ?)";
+        $stats_params = [$user_id, "%" . $_SESSION['full_name'] . "%"];
+    } else {
+        $stats_where = "1=1";
+        $stats_params = [];
+    }
+}
+
+$stats_query = "
     SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
@@ -68,693 +119,457 @@ $stats = $db->prepare("
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
         SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
     FROM production_jobs pj
-    WHERE $where_clause
-");
-$stats->execute($params);
-$statistics = $stats->fetch();
+    WHERE $stats_where
+";
+
+$stats_stmt = $db->prepare($stats_query);
+$stats_stmt->execute($stats_params);
+$statistics = $stats_stmt->fetch();
 ?>
-
-<style>
-    .job-card {
-        border: 2px solid #e9ecef;
-        border-radius: 15px;
-        padding: 20px;
-        margin-bottom: 15px;
-        transition: all 0.3s ease;
-        cursor: pointer;
-    }
-
-    .job-card:hover {
-        border-color: var(--primary-color);
-        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.2);
-        transform: translateY(-2px);
-    }
-
-    .job-card.urgent {
-        border-left: 5px solid #dc3545;
-    }
-
-    .job-card.overdue {
-        border-left: 5px solid #ffc107;
-        background: #fff8e1;
-    }
-
-    .filter-tabs {
-        display: flex;
-        gap: 10px;
-        margin-bottom: 20px;
-        flex-wrap: wrap;
-    }
-
-    .filter-tab {
-        padding: 10px 20px;
-        border-radius: 25px;
-        border: 2px solid #e9ecef;
-        background: white;
-        cursor: pointer;
-        transition: all 0.3s ease;
-        font-weight: 600;
-    }
-
-    .filter-tab:hover {
-        border-color: var(--primary-color);
-        color: var(--primary-color);
-    }
-
-    .filter-tab.active {
-        background: var(--primary-color);
-        color: white;
-        border-color: var(--primary-color);
-    }
-
-    .progress-bar-custom {
-        height: 8px;
-        border-radius: 10px;
-        background: #e9ecef;
-        overflow: hidden;
-    }
-
-    .progress-fill {
-        height: 100%;
-        background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
-        transition: width 0.3s ease;
-    }
-
-    .status-badge {
-        padding: 8px 16px;
-        border-radius: 20px;
-        font-size: 0.85rem;
-        font-weight: 600;
-    }
-
-    .status-pending {
-        background: #fff3cd;
-        color: #856404;
-    }
-
-    .status-in_progress {
-        background: #cce7ff;
-        color: #004085;
-    }
-
-    .status-completed {
-        background: #d4edda;
-        color: #155724;
-    }
-
-    .status-cancelled {
-        background: #f8d7da;
-        color: #721c24;
-    }
-
-    .action-buttons .btn {
-        margin: 2px;
-        border-radius: 20px;
-        font-size: 0.85rem;
-    }
-
-    .stats-card {
-        background: white;
-        border-radius: 15px;
-        padding: 20px;
-        text-align: center;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        transition: all 0.3s ease;
-    }
-
-    .stats-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.15);
-    }
-
-    .stats-number {
-        font-size: 2rem;
-        font-weight: bold;
-        margin-bottom: 5px;
-    }
-
-    .stats-label {
-        color: #6c757d;
-        font-size: 0.9rem;
-    }
-
-    .assigned-badge {
-        display: inline-flex;
-        align-items: center;
-        padding: 6px 12px;
-        background: #e3f2fd;
-        border-radius: 20px;
-        font-size: 0.85rem;
-    }
-
-    .assigned-badge i {
-        margin-right: 5px;
-    }
-</style>
 
 <!-- Statistics Cards -->
 <div class="row mb-4">
     <div class="col-lg-3 col-md-6 mb-3">
-        <div class="stats-card" style="border-left: 4px solid #667eea;">
-            <div class="stats-number text-primary"><?= number_format($statistics['total']) ?></div>
-            <div class="stats-label">งานทั้งหมด</div>
+        <div class="card" style="border-left: 4px solid #667eea;">
+            <div class="card-body text-center">
+                <div style="font-size: 2rem; font-weight: bold; color: #667eea;"><?= number_format($statistics['total']) ?></div>
+                <small class="text-muted">งานทั้งหมด</small>
+            </div>
         </div>
     </div>
     <div class="col-lg-3 col-md-6 mb-3">
-        <div class="stats-card" style="border-left: 4px solid #ffc107;">
-            <div class="stats-number text-warning"><?= number_format($statistics['pending']) ?></div>
-            <div class="stats-label">รอเริ่มงาน</div>
+        <div class="card" style="border-left: 4px solid #ffc107;">
+            <div class="card-body text-center">
+                <div style="font-size: 2rem; font-weight: bold; color: #ffc107;"><?= number_format($statistics['pending']) ?></div>
+                <small class="text-muted">รอเริ่มงาน</small>
+            </div>
         </div>
     </div>
     <div class="col-lg-3 col-md-6 mb-3">
-        <div class="stats-card" style="border-left: 4px solid #17a2b8;">
-            <div class="stats-number text-info"><?= number_format($statistics['in_progress']) ?></div>
-            <div class="stats-label">กำลังผลิต</div>
+        <div class="card" style="border-left: 4px solid #17a2b8;">
+            <div class="card-body text-center">
+                <div style="font-size: 2rem; font-weight: bold; color: #17a2b8;"><?= number_format($statistics['in_progress']) ?></div>
+                <small class="text-muted">กำลังผลิต</small>
+            </div>
         </div>
     </div>
     <div class="col-lg-3 col-md-6 mb-3">
-        <div class="stats-card" style="border-left: 4px solid #28a745;">
-            <div class="stats-number text-success"><?= number_format($statistics['completed']) ?></div>
-            <div class="stats-label">เสร็จแล้ว</div>
+        <div class="card" style="border-left: 4px solid #28a745;">
+            <div class="card-body text-center">
+                <div style="font-size: 2rem; font-weight: bold; color: #28a745;"><?= number_format($statistics['completed']) ?></div>
+                <small class="text-muted">เสร็จแล้ว</small>
+            </div>
         </div>
     </div>
 </div>
 
-<!-- Main Card -->
-<div class="card">
-    <div class="card-header">
-        <div class="row align-items-center">
-            <div class="col-md-6">
-                <h5><i class="fas fa-tasks me-2"></i>รายการงานการผลิต</h5>
-            </div>
-            <div class="col-md-6 text-end">
-                <div class="d-flex justify-content-end gap-2">
-                    <input type="text" id="searchJob" class="form-control form-control-sm" 
-                           placeholder="ค้นหาเลขที่งาน, สินค้า, ผู้รับผิดชอบ..." 
-                           style="max-width: 300px;">
-                    <?php if (in_array($user_role, ['planning', 'admin'])): ?>
-                        <a href="create-job.php" class="btn btn-primary btn-sm">
-                            <i class="fas fa-plus me-1"></i>สร้างงานใหม่
-                        </a>
-                    <?php endif; ?>
-                </div>
-            </div>
+<!-- Filter Tabs -->
+<div class="mb-4">
+    <div class="btn-group" role="group">
+        <a href="?filter=all" class="btn btn-outline-primary <?= $filter === 'all' ? 'active' : '' ?>">
+            <i class="fas fa-list me-1"></i>ทั้งหมด <span class="badge bg-secondary ms-1"><?= $statistics['total'] ?></span>
+        </a>
+        <a href="?filter=pending" class="btn btn-outline-primary <?= $filter === 'pending' ? 'active' : '' ?>">
+            <i class="fas fa-clock me-1"></i>รอเริ่มงาน <span class="badge bg-warning ms-1"><?= $statistics['pending'] ?></span>
+        </a>
+        <a href="?filter=in_progress" class="btn btn-outline-primary <?= $filter === 'in_progress' ? 'active' : '' ?>">
+            <i class="fas fa-cogs me-1"></i>กำลังผลิต <span class="badge bg-info ms-1"><?= $statistics['in_progress'] ?></span>
+        </a>
+        <a href="?filter=completed" class="btn btn-outline-primary <?= $filter === 'completed' ? 'active' : '' ?>">
+            <i class="fas fa-check-circle me-1"></i>เสร็จแล้ว <span class="badge bg-success ms-1"><?= $statistics['completed'] ?></span>
+        </a>
+    </div>
+</div>
+
+<!-- Search -->
+<div class="row mb-4">
+    <div class="col-md-8">
+        <div class="input-group">
+            <span class="input-group-text"><i class="fas fa-search"></i></span>
+            <input type="text" class="form-control" id="searchInput" 
+                   placeholder="ค้นหาเลขที่งาน, สินค้า, หรือผู้รับผิดชอบ..." 
+                   value="<?= htmlspecialchars($search) ?>">
         </div>
     </div>
-    <div class="card-body">
-        <!-- Filter Tabs -->
-        <div class="filter-tabs">
-            <div class="filter-tab active" data-filter="all">
-                <i class="fas fa-list"></i> ทั้งหมด (<?= count($all_jobs) ?>)
-            </div>
-            <div class="filter-tab" data-filter="pending">
-                <i class="fas fa-clock"></i> รอเริ่มงาน (<?= $statistics['pending'] ?>)
-            </div>
-            <div class="filter-tab" data-filter="in_progress">
-                <i class="fas fa-cogs"></i> กำลังผลิต (<?= $statistics['in_progress'] ?>)
-            </div>
-            <div class="filter-tab" data-filter="completed">
-                <i class="fas fa-check-circle"></i> เสร็จแล้ว (<?= $statistics['completed'] ?>)
-            </div>
-            <div class="filter-tab" data-filter="overdue">
-                <i class="fas fa-exclamation-triangle"></i> เกินกำหนด
-            </div>
-        </div>
+    <div class="col-md-4 text-end">
+        <?php if (in_array($user_role, ['planning', 'admin'])): ?>
+            <a href="create-job.php" class="btn btn-success me-2">
+                <i class="fas fa-plus me-1"></i>สร้างงานใหม่
+            </a>
+        <?php endif; ?>
+        <button class="btn btn-outline-primary" onclick="refreshPage()">
+            <i class="fas fa-sync-alt me-1"></i>รีเฟรช
+        </button>
+    </div>
+</div>
 
-        <!-- Jobs List -->
-        <div id="jobsList">
-            <?php if (!empty($all_jobs)): ?>
-                <?php foreach ($all_jobs as $job): ?>
-                    <?php
-                    // กำหนดสถานะ
-                    $status_config = [
-                        'pending' => ['class' => 'pending', 'icon' => 'clock', 'text' => 'รอเริ่มงาน'],
-                        'in_progress' => ['class' => 'in_progress', 'icon' => 'cogs', 'text' => 'กำลังผลิต'],
-                        'completed' => ['class' => 'completed', 'icon' => 'check-circle', 'text' => 'เสร็จแล้ว'],
-                        'cancelled' => ['class' => 'cancelled', 'icon' => 'times-circle', 'text' => 'ยกเลิก']
-                    ];
-                    $status = $status_config[$job['status']];
-                    
-                    // เช็คว่าเกินกำหนดหรือไม่
-                    $is_overdue = $job['days_remaining'] < 0 && in_array($job['status'], ['pending', 'in_progress']);
-                    
-                    // กำหนดสีตามวันที่เหลือ
-                    $days_class = '';
-                    if ($is_overdue) {
-                        $days_class = 'text-danger';
-                    } elseif ($job['days_remaining'] <= 3) {
-                        $days_class = 'text-warning';
-                    } else {
-                        $days_class = 'text-success';
-                    }
-                    
-                    // ชื่อผู้รับผิดชอบ - ใช้ assigned_to_name ถ้ามี ถ้าไม่มีใช้ assigned_user_name
-                    $assigned_name = !empty($job['assigned_to_name']) 
-                        ? $job['assigned_to_name'] 
-                        : ($job['assigned_user_name'] ?? 'ไม่ระบุ');
-                    ?>
-                    <div class="job-card <?= $is_overdue ? 'overdue' : '' ?>" 
-                         data-status="<?= $job['status'] ?>" 
-                         data-overdue="<?= $is_overdue ? '1' : '0' ?>"
-                         data-search="<?= strtolower($job['job_number'] . ' ' . $job['product_name'] . ' ' . $assigned_name) ?>"
-                         onclick="viewJobDetail(<?= $job['job_id'] ?>)">
-                        
-                        <div class="row">
-                            <!-- ข้อมูลหลัก -->
-                            <div class="col-lg-8">
-                                <div class="d-flex align-items-start mb-3">
-                                    <div class="flex-grow-1">
-                                        <h5 class="mb-1">
-                                            <i class="fas fa-briefcase text-primary me-2"></i>
-                                            <strong><?= htmlspecialchars($job['job_number']) ?></strong>
-                                            <span class="status-badge status-<?= $status['class'] ?> ms-2">
-                                                <i class="fas fa-<?= $status['icon'] ?>"></i>
-                                                <?= $status['text'] ?>
-                                            </span>
-                                            <?php if ($is_overdue): ?>
-                                                <span class="badge bg-danger ms-2">
-                                                    <i class="fas fa-exclamation-triangle"></i> เกินกำหนด
-                                                </span>
-                                            <?php endif; ?>
-                                        </h5>
-                                        <p class="text-muted mb-2">
-                                            <i class="fas fa-box me-1"></i>
-                                            <strong><?= htmlspecialchars($job['product_name']) ?></strong>
-                                            (<?= htmlspecialchars($job['product_code']) ?>)
-                                        </p>
-                                    </div>
-                                </div>
-
-                                <div class="row mb-3">
-                                    <div class="col-md-4">
-                                        <small class="text-muted">จำนวนที่ผลิต:</small>
-                                        <div>
-                                            <span class="fs-5 fw-bold text-primary"><?= number_format($job['quantity_produced']) ?></span>
-                                            <span class="text-muted">/ <?= number_format($job['quantity_planned']) ?></span>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <small class="text-muted">ผู้รับผิดชอบ:</small>
-                                        <div>
-                                            <span class="assigned-badge">
-                                                <i class="fas fa-user"></i>
-                                                <?= htmlspecialchars($assigned_name) ?>
-                                            </span>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <small class="text-muted">วันที่เหลือ:</small>
-                                        <div class="<?= $days_class ?> fw-bold">
-                                            <?php if ($is_overdue): ?>
-                                                <i class="fas fa-exclamation-circle"></i>
-                                                เกิน <?= abs($job['days_remaining']) ?> วัน
-                                            <?php elseif ($job['days_remaining'] == 0): ?>
-                                                <i class="fas fa-calendar-day"></i> วันนี้
-                                            <?php else: ?>
-                                                <i class="fas fa-calendar-alt"></i>
-                                                อีก <?= $job['days_remaining'] ?> วัน
-                                            <?php endif; ?>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <!-- Progress Bar -->
-                                <div class="mb-2">
-                                    <div class="d-flex justify-content-between mb-1">
-                                        <small class="text-muted">ความคืบหน้า:</small>
-                                        <small class="fw-bold"><?= $job['progress_percent'] ?>%</small>
-                                    </div>
-                                    <div class="progress-bar-custom">
-                                        <div class="progress-fill" style="width: <?= min($job['progress_percent'], 100) ?>%"></div>
-                                    </div>
-                                </div>
-
-                                <!-- วันที่ -->
-                                <div class="mt-2">
-                                    <small class="text-muted">
-                                        <i class="fas fa-calendar me-1"></i>
-                                        เริ่ม: <?= date('d/m/Y', strtotime($job['start_date'])) ?>
-                                        <i class="fas fa-arrow-right mx-2"></i>
-                                        เสร็จ: <?= date('d/m/Y', strtotime($job['end_date'])) ?>
-                                        <span class="ms-3">
-                                            <i class="fas fa-clock me-1"></i>
-                                            สร้างโดย: <?= htmlspecialchars($job['created_by_name']) ?>
-                                        </span>
-                                    </small>
-                                </div>
-                            </div>
-
-                            <!-- ปุ่มจัดการ -->
-                            <div class="col-lg-4 text-end">
-                                <div class="action-buttons" onclick="event.stopPropagation();">
-                                    <button class="btn btn-info btn-sm" onclick="viewJobDetail(<?= $job['job_id'] ?>)">
-                                        <i class="fas fa-eye"></i> ดูรายละเอียด
-                                    </button>
-
-                                    <?php if ($job['status'] === 'pending' && in_array($user_role, ['planning', 'admin'])): ?>
-                                        <button class="btn btn-success btn-sm" onclick="startJob(<?= $job['job_id'] ?>, '<?= htmlspecialchars($job['job_number']) ?>')">
-                                            <i class="fas fa-play"></i> เริ่มงาน
-                                        </button>
-                                    <?php endif; ?>
-
-                                    <?php if ($job['status'] === 'in_progress' && in_array($user_role, ['production', 'admin'])): ?>
-                                        <button class="btn btn-primary btn-sm" onclick="updateProgress(<?= $job['job_id'] ?>, '<?= htmlspecialchars($job['job_number']) ?>')">
-                                            <i class="fas fa-edit"></i> อัพเดท
-                                        </button>
-                                    <?php endif; ?>
-
-                                    <?php if (in_array($job['status'], ['pending', 'in_progress']) && in_array($user_role, ['planning', 'admin'])): ?>
-                                        <button class="btn btn-warning btn-sm" onclick="editJob(<?= $job['job_id'] ?>)">
-                                            <i class="fas fa-pencil-alt"></i> แก้ไข
-                                        </button>
-                                        <button class="btn btn-danger btn-sm" onclick="cancelJob(<?= $job['job_id'] ?>, '<?= htmlspecialchars($job['job_number']) ?>')">
-                                            <i class="fas fa-times"></i> ยกเลิก
-                                        </button>
-                                    <?php endif; ?>
-                                </div>
-
-                                <?php if (!empty($job['notes'])): ?>
-                                    <div class="mt-3 text-start">
-                                        <small class="text-muted">
-                                            <i class="fas fa-sticky-note"></i>
-                                            <?= nl2br(htmlspecialchars(mb_substr($job['notes'], 0, 100))) ?>
-                                            <?= mb_strlen($job['notes']) > 100 ? '...' : '' ?>
-                                        </small>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                    </div>
+<!-- Page length selector -->
+<div class="row mb-3">
+    <div class="col-md-2">
+        <div class="input-group">
+            <label class="input-group-text" for="selectLimit">Show</label>
+            <select id="selectLimit" class="form-select" onchange="changeLimit()">
+                <?php foreach ($allowed_limits as $opt): ?>
+                    <option value="<?= $opt ?>" <?= $limit == $opt ? 'selected' : '' ?>><?= $opt ?></option>
                 <?php endforeach; ?>
-            <?php else: ?>
-                <div class="text-center py-5">
-                    <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
-                    <p class="text-muted mb-3">ไม่มีงานการผลิต</p>
-                    <?php if (in_array($user_role, ['planning', 'admin'])): ?>
-                        <a href="create-job.php" class="btn btn-primary">
-                            <i class="fas fa-plus me-1"></i>สร้างงานใหม่
-                        </a>
-                    <?php endif; ?>
-                </div>
+            </select>
+        </div>
+    </div>
+    <div class="col-md-10 text-end">
+        <?php if ($total_jobs > 0): ?>
+            <small class="text-muted">Showing <?= $offset + 1 ?> to <?= min($offset + $limit, $total_jobs) ?> of <?= $total_jobs ?> entries</small>
+        <?php endif; ?>
+    </div>
+</div>
+
+<!-- Jobs Table -->
+<?php if (!empty($all_jobs)): ?>
+    <div class="card">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>เลขที่งาน</th>
+                        <th>สินค้า</th>
+                        <th>จำนวน / ความคืบหน้า</th>
+                        <th>ผู้รับผิดชอบ</th>
+                        <th>สถานะ</th>
+                        <th>วันที่กำหนด</th>
+                        <th>การกระทำ</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($all_jobs as $job): ?>
+                        <?php
+                        $status_colors = [
+                            'pending' => 'warning',
+                            'in_progress' => 'info',
+                            'completed' => 'success',
+                            'cancelled' => 'danger'
+                        ];
+                        
+                        $status_texts = [
+                            'pending' => 'รอเริ่มงาน',
+                            'in_progress' => 'กำลังผลิต',
+                            'completed' => 'เสร็จแล้ว',
+                            'cancelled' => 'ยกเลิก'
+                        ];
+                        
+                        $is_overdue = $job['days_remaining'] < 0 && in_array($job['status'], ['pending', 'in_progress']);
+                        if (!empty($job['assigned_to_name'])) {
+                            $assigned_name = $job['assigned_to_name'];
+                        } elseif (!empty($job['assigned_user_name'])) {
+                            $assigned_name = $job['assigned_user_name'];
+                        } else {
+                            // Fallback: try to extract from notes (format added by older code)
+                            $assigned_name = 'ไม่ระบุ';
+                            if (!empty($job['notes'])) {
+                                if (preg_match('/Assigned to:\s*(.+)/u', $job['notes'], $m)) {
+                                    $assigned_name = trim($m[1]);
+                                }
+                            }
+                        }
+                        ?>
+                        <tr <?= $is_overdue ? 'style="background-color: #fff8e1;"' : '' ?>>
+                            <td><strong><?= htmlspecialchars($job['job_number']) ?></strong></td>
+                            <td>
+                                <strong><?= htmlspecialchars($job['product_code']) ?></strong><br>
+                                <small class="text-muted"><?= htmlspecialchars($job['product_name']) ?></small>
+                            </td>
+                            <td>
+                                <div>
+                                    <small><?= number_format($job['quantity_produced']) ?>/<?= number_format($job['quantity_planned']) ?></small>
+                                </div>
+                                <div class="progress" style="height: 20px;">
+                                    <div class="progress-bar" role="progressbar" style="width: <?= $job['progress_percent'] ?>%;" 
+                                         aria-valuenow="<?= $job['progress_percent'] ?>" aria-valuemin="0" aria-valuemax="100">
+                                        <?= round($job['progress_percent']) ?>%
+                                    </div>
+                                </div>
+                            </td>
+                            <td><?= htmlspecialchars($assigned_name) ?></td>
+                            <td>
+                                <span class="badge bg-<?= $status_colors[$job['status']] ?>">
+                                    <?= $status_texts[$job['status']] ?>
+                                </span>
+                                <?php if ($is_overdue): ?>
+                                    <br><span class="badge bg-danger mt-1">
+                                        <i class="fas fa-exclamation-triangle"></i> เกินกำหนด
+                                    </span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <?= date('d/m/Y', strtotime($job['end_date'])) ?>
+                                <br>
+                                <small class="<?= $is_overdue ? 'text-danger' : ($job['days_remaining'] <= 3 ? 'text-warning' : 'text-success') ?>">
+                                    <?php if ($job['days_remaining'] < 0): ?>
+                                        เกิน <?= abs($job['days_remaining']) ?> วัน
+                                    <?php else: ?>
+                                        เหลือ <?= $job['days_remaining'] ?> วัน
+                                    <?php endif; ?>
+                                </small>
+                            </td>
+                            <td>
+                                <button class="btn btn-outline-primary btn-sm" onclick="viewJobDetail(<?= $job['job_id'] ?>)">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php if ($total_pages > 1): ?>
+        <?php
+            // Helper to build page URL preserving params
+            function build_page_url($p, $limit) {
+                $params = $_GET;
+                $params['page'] = $p;
+                $params['limit'] = $limit;
+                return '?' . http_build_query($params);
+            }
+
+            $start_page = max(1, $page - 2);
+            $end_page = min($total_pages, $page + 2);
+            if ($end_page - $start_page < 4) {
+                // expand range to 5 pages when possible
+                $start_page = max(1, min($start_page, $total_pages - 4));
+                $end_page = min($total_pages, max($end_page, $start_page + 4));
+            }
+        ?>
+        <div class="card-footer d-flex justify-content-between align-items-center">
+            <div>
+                <small class="text-muted">Showing <?= $offset + 1 ?> to <?= min($offset + $limit, $total_jobs) ?> of <?= $total_jobs ?> entries</small>
+            </div>
+            <nav>
+                <ul class="pagination mb-0">
+                    <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
+                        <a class="page-link" href="<?= $page <= 1 ? '#' : build_page_url($page-1, $limit) ?>" aria-label="Previous">&laquo;</a>
+                    </li>
+                    <?php for ($p = $start_page; $p <= $end_page; $p++): ?>
+                        <li class="page-item <?= $p == $page ? 'active' : '' ?>">
+                            <a class="page-link" href="<?= build_page_url($p, $limit) ?>"><?= $p ?></a>
+                        </li>
+                    <?php endfor; ?>
+                    <li class="page-item <?= $page >= $total_pages ? 'disabled' : '' ?>">
+                        <a class="page-link" href="<?= $page >= $total_pages ? '#' : build_page_url($page+1, $limit) ?>" aria-label="Next">&raquo;</a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+        <?php endif; ?>
+    </div>
+<?php else: ?>
+    <div class="card">
+        <div class="card-body text-center py-5">
+            <i class="fas fa-inbox fa-4x text-muted mb-4"></i>
+            <h4 class="text-muted">ไม่พบงานการผลิต</h4>
+            <?php if (!empty($search)): ?>
+                <p class="text-muted">ไม่มีงานที่ตรงกับคำค้นหา</p>
             <?php endif; ?>
         </div>
     </div>
-</div>
+<?php endif; ?>
 
-<!-- View Job Detail Modal -->
-<div class="modal fade" id="jobDetailModal" tabindex="-1">
-    <div class="modal-dialog modal-xl">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">รายละเอียดงานการผลิต</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body" id="jobDetailContent">
-                <!-- Content loaded by JavaScript -->
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
-            </div>
         </div>
     </div>
-</div>
 
-<!-- Update Progress Modal -->
-<div class="modal fade" id="updateProgressModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">อัพเดทความคืบหน้า</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <form id="updateProgressForm">
+    <!-- Job Detail Modal -->
+    <div class="modal fade" id="jobDetailModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-briefcase me-2"></i>รายละเอียดงานการผลิต
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
                 <div class="modal-body">
-                    <input type="hidden" id="update_job_id" name="job_id">
-                    <input type="hidden" name="action" value="update_status">
-                    <input type="hidden" name="status" value="in_progress">
-                    
-                    <div class="mb-3">
-                        <label class="form-label">เลขที่งาน</label>
-                        <input type="text" class="form-control" id="update_job_number" readonly>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">จำนวนที่ผลิตได้ <span class="text-danger">*</span></label>
-                        <input type="number" class="form-control" name="quantity_produced" 
-                               required min="0" placeholder="ระบุจำนวนที่ผลิตได้">
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">หมายเหตุ</label>
-                        <textarea class="form-control" name="notes" rows="3" 
-                                  placeholder="บันทึกความคืบหน้า, ปัญหาที่พบ"></textarea>
+                    <div id="jobDetailContent">
+                        <!-- Detail will be loaded here -->
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
-                    <button type="submit" class="btn btn-primary">บันทึก</button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
                 </div>
-            </form>
+            </div>
         </div>
     </div>
-</div>
-
-</div>
-</div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
 <script>
-// Filter functionality
-document.querySelectorAll('.filter-tab').forEach(tab => {
-    tab.addEventListener('click', function() {
-        // Update active tab
-        document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
-        this.classList.add('active');
+    // Search functionality
+    let searchTimeout;
+    document.getElementById('searchInput').addEventListener('input', function() {
+        clearTimeout(searchTimeout);
+        const searchTerm = this.value;
         
-        const filter = this.dataset.filter;
-        const cards = document.querySelectorAll('.job-card');
-        
-        cards.forEach(card => {
-            if (filter === 'all') {
-                card.style.display = 'block';
-            } else if (filter === 'overdue') {
-                card.style.display = card.dataset.overdue === '1' ? 'block' : 'none';
+        searchTimeout = setTimeout(() => {
+            const currentUrl = new URL(window.location);
+            if (searchTerm) {
+                currentUrl.searchParams.set('search', searchTerm);
             } else {
-                card.style.display = card.dataset.status === filter ? 'block' : 'none';
+                currentUrl.searchParams.delete('search');
             }
-        });
+            window.location.href = currentUrl.toString();
+        }, 500);
     });
-});
 
-// Search functionality
-document.getElementById('searchJob').addEventListener('input', function() {
-    const searchTerm = this.value.toLowerCase();
-    const cards = document.querySelectorAll('.job-card');
-    
-    cards.forEach(card => {
-        const searchData = card.dataset.search;
-        card.style.display = searchData.includes(searchTerm) ? 'block' : 'none';
-    });
-});
+    function viewJobDetail(jobId) {
+        fetch(`../../api/jobs.php?action=get_detail&job_id=${jobId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const job = data.data;
+                    const statusColors = {
+                        'pending': 'warning',
+                        'in_progress': 'info',
+                        'completed': 'success',
+                        'cancelled': 'danger'
+                    };
+                    const statusTexts = {
+                        'pending': 'รอเริ่มงาน',
+                        'in_progress': 'กำลังผลิต',
+                        'completed': 'เสร็จแล้ว',
+                        'cancelled': 'ยกเลิก'
+                    };
 
-// View Job Detail
-function viewJobDetail(jobId) {
-    fetch(`../../api/jobs.php?action=get&id=${jobId}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                displayJobDetail(data.job);
-                new bootstrap.Modal(document.getElementById('jobDetailModal')).show();
-            } else {
-                Swal.fire('เกิดข้อผิดพลาด', data.message, 'error');
-            }
-        })
-        .catch(error => {
-            Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถโหลดข้อมูลได้', 'error');
-        });
-}
+                    const displayAssigned = job.assigned_to_name || job.assigned_user_name || (job.notes && (job.notes.match(/Assigned to:\s*(.+)/) || [])[1]) || 'ไม่ระบุ';
 
-function displayJobDetail(job) {
-    const statusConfig = {
-        'pending': { class: 'warning', text: 'รอเริ่มงาน' },
-        'in_progress': { class: 'info', text: 'กำลังผลิต' },
-        'completed': { class: 'success', text: 'เสร็จแล้ว' },
-        'cancelled': { class: 'danger', text: 'ยกเลิก' }
-    };
-    
-    const status = statusConfig[job.status];
-    const assignedName = job.assigned_to_name || job.assigned_user_name || 'ไม่ระบุ';
-    
-    document.getElementById('jobDetailContent').innerHTML = `
-        <div class="row mb-4">
-            <div class="col-md-6">
-                <h6><i class="fas fa-info-circle me-2"></i>ข้อมูลงาน</h6>
-                <table class="table table-borderless">
-                    <tr>
-                        <td width="40%"><strong>เลขที่งาน:</strong></td>
-                        <td>${job.job_number}</td>
-                    </tr>
-                    <tr>
-                        <td><strong>สถานะ:</strong></td>
-                        <td><span class="badge bg-${status.class}">${status.text}</span></td>
-                    </tr>
-                    <tr>
-                        <td><strong>สินค้า:</strong></td>
-                        <td>${job.product_name} (${job.product_code})</td>
-                    </tr>
-                    <tr>
-                        <td><strong>ผู้รับผิดชอบ:</strong></td>
-                        <td><span class="badge bg-info">${assignedName}</span></td>
-                    </tr>
-                </table>
-            </div>
-            <div class="col-md-6">
-                <h6><i class="fas fa-chart-line me-2"></i>ความคืบหน้า</h6>
-                <table class="table table-borderless">
-                    <tr>
-                        <td width="40%"><strong>จำนวนวางแผน:</strong></td>
-                        <td>${parseInt(job.quantity_planned).toLocaleString()} ชิ้น</td>
-                    </tr>
-                    <tr>
-                        <td><strong>จำนวนที่ผลิตได้:</strong></td>
-                        <td>${parseInt(job.quantity_produced).toLocaleString()} ชิ้น</td>
-                    </tr>
-                    <tr>
-                        <td><strong>วันที่เริ่ม:</strong></td>
-                        <td>${new Date(job.start_date).toLocaleDateString('th-TH')}</td>
-                    </tr>
-                    <tr>
-                        <td><strong>วันที่เสร็จ:</strong></td>
-                        <td>${new Date(job.end_date).toLocaleDateString('th-TH')}</td>
-                    </tr>
-                </table>
-            </div>
-        </div>
-        ${job.notes ? `
-            <div class="alert alert-light">
-                <h6><i class="fas fa-sticky-note me-2"></i>หมายเหตุ</h6>
-                <p class="mb-0">${job.notes.replace(/\n/g, '<br>')}</p>
-            </div>
-        ` : ''}
-    `;
-}
-
-// Start Job
-function startJob(jobId, jobNumber) {
-    Swal.fire({
-        title: 'เริ่มงานการผลิต?',
-        html: `คุณต้องการเริ่มงาน <strong>${jobNumber}</strong> หรือไม่?`,
-        icon: 'question',
-        showCancelButton: true,
-        confirmButtonColor: '#28a745',
-        cancelButtonColor: '#6c757d',
-        confirmButtonText: 'เริ่มงาน',
-        cancelButtonText: 'ยกเลิก'
-    }).then((result) => {
-        if (result.isConfirmed) {
-            updateJobStatus(jobId, 'in_progress', 0, 'เริ่มงานการผลิต');
-        }
-    });
-}
-
-// Update Progress
-function updateProgress(jobId, jobNumber) {
-    document.getElementById('update_job_id').value = jobId;
-    document.getElementById('update_job_number').value = jobNumber;
-    new bootstrap.Modal(document.getElementById('updateProgressModal')).show();
-}
-
-// Update Progress Form Submit
-document.getElementById('updateProgressForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    
-    const formData = new FormData(this);
-    
-    fetch('../../api/jobs.php', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            Swal.fire('สำเร็จ', 'อัพเดทความคืบหน้าเรียบร้อย', 'success').then(() => {
-                bootstrap.Modal.getInstance(document.getElementById('updateProgressModal')).hide();
-                location.reload();
+                    let html = `
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <h6 class="mb-1">
+                                    <strong>เลขที่งาน:</strong> ${job.job_number}
+                                </h6>
+                            </div>
+                            <div class="col-md-6 text-end">
+                                <span class="badge bg-${statusColors[job.status]}">
+                                    ${statusTexts[job.status]}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <strong>สินค้า:</strong><br>
+                                ${job.product_code} - ${job.product_name}
+                            </div>
+                            <div class="col-md-6">
+                                <strong>ผู้รับผิดชอบ:</strong><br>
+                                ${displayAssigned}
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <strong>จำนวนที่วางแผน:</strong><br>
+                                ${Number(job.quantity_planned).toLocaleString()} หน่วย
+                            </div>
+                            <div class="col-md-6">
+                                <strong>จำนวนที่ผลิตแล้ว:</strong><br>
+                                ${Number(job.quantity_produced).toLocaleString()} หน่วย
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <strong>วันเริ่ม:</strong><br>
+                                ${new Date(job.start_date).toLocaleDateString('th-TH')}
+                            </div>
+                            <div class="col-md-6">
+                                <strong>วันสิ้นสุด:</strong><br>
+                                ${new Date(job.end_date).toLocaleDateString('th-TH')}
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="progress" style="height: 25px;">
+                                <div class="progress-bar" role="progressbar" 
+                                     style="width: ${(job.quantity_produced / job.quantity_planned * 100) || 0}%;"
+                                     aria-valuenow="${(job.quantity_produced / job.quantity_planned * 100) || 0}" 
+                                     aria-valuemin="0" aria-valuemax="100">
+                                    ${Math.round((job.quantity_produced / job.quantity_planned * 100) || 0)}%
+                                </div>
+                            </div>
+                        </div>
+                        ${job.notes ? `
+                            <div class="mb-3 p-3 bg-light rounded">
+                                <strong>หมายเหตุ:</strong><br>
+                                <small>${job.notes.replace(/\n/g, '<br>')}</small>
+                            </div>
+                        ` : ''}
+                        
+                        ${job.required_materials && job.required_materials.length > 0 ? `
+                            <hr>
+                            <h6 class="mb-3"><i class="fas fa-list me-2"></i>รายการวัสดุ</h6>
+                            <div class="table-responsive">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>รหัสวัสดุ</th>
+                                            <th>ชื่อวัสดุ</th>
+                                            <th class="text-end">จำนวน</th>
+                                            <th>หน่วย</th>
+                                            <th class="text-center">การ์ด</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${job.required_materials.map(m => {
+                                            const quantityPerCard = m.quantity_per_card || m.quantity_per_unit || 1;
+                                            const requiredQty = m.required_quantity || 0;
+                                            const totalCards = Math.ceil(requiredQty / quantityPerCard);
+                                            const cardColor = m.card_color || '#3498db';
+                                            return `
+                                                <tr>
+                                                    <td><strong>${m.part_code}</strong></td>
+                                                    <td>${m.material_name}</td>
+                                                    <td class="text-end">${Number(requiredQty).toLocaleString()}</td>
+                                                    <td>${m.unit}</td>
+                                                    <td class="text-center">
+                                                        <div style="display: inline-flex; align-items: center;">
+                                                            <div style="width: 45px; height: 45px; background-color: ${cardColor}; border: 2px solid #ddd; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                                                                <span style="color: white; font-weight: bold; text-shadow: 0 1px 1px rgba(0,0,0,0.2); font-size: 14px;">${totalCards}</span>
+                                                                <span style="color: white; font-weight: 500; text-shadow: 0 1px 1px rgba(0,0,0,0.2); font-size: 8px;">ใบ</span>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            `;
+                                        }).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ` : ''}
+                    `;
+                    
+                    document.getElementById('jobDetailContent').innerHTML = html;
+                    new bootstrap.Modal(document.getElementById('jobDetailModal')).show();
+                } else {
+                    Swal.fire('เกิดข้อผิดพลาด', data.message || 'ไม่สามารถโหลดข้อมูลได้', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถโหลดข้อมูลได้', 'error');
             });
-        } else {
-            Swal.fire('เกิดข้อผิดพลาด', data.message, 'error');
-        }
-    });
-});
-
-// Cancel Job
-function cancelJob(jobId, jobNumber) {
-    Swal.fire({
-        title: 'ยกเลิกงาน?',
-        html: `คุณต้องการยกเลิกงาน <strong>${jobNumber}</strong> หรือไม่?`,
-        icon: 'warning',
-        showCancelButton: true,
-        confirmButtonColor: '#dc3545',
-        cancelButtonColor: '#6c757d',
-        confirmButtonText: 'ยกเลิกงาน',
-        cancelButtonText: 'ย้อนกลับ',
-        input: 'textarea',
-        inputLabel: 'เหตุผล',
-        inputPlaceholder: 'ระบุเหตุผลในการยกเลิก',
-        inputValidator: (value) => {
-            if (!value) {
-                return 'กรุณาระบุเหตุผล'
-            }
-        }
-    }).then((result) => {
-        if (result.isConfirmed) {
-            updateJobStatus(jobId, 'cancelled', null, result.value);
-        }
-    });
-}
-
-// Update Job Status
-function updateJobStatus(jobId, status, quantityProduced, notes) {
-    const formData = new FormData();
-    formData.append('action', 'update_status');
-    formData.append('job_id', jobId);
-    formData.append('status', status);
-    if (quantityProduced !== null) {
-        formData.append('quantity_produced', quantityProduced);
     }
-    if (notes) {
-        formData.append('notes', notes);
+
+    function changeLimit() {
+        const sel = document.getElementById('selectLimit');
+        const newLimit = sel.value;
+        const url = new URL(window.location);
+        url.searchParams.set('limit', newLimit);
+        url.searchParams.set('page', 1);
+        window.location.href = url.toString();
     }
-    
-    fetch('../../api/jobs.php', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            Swal.fire('สำเร็จ', data.message, 'success').then(() => {
-                location.reload();
-            });
-        } else {
-            Swal.fire('เกิดข้อผิดพลาด', data.message, 'error');
-        }
-    });
-}
 
-// Edit Job
-function editJob(jobId) {
-    window.location.href = `edit-job.php?id=${jobId}`;
-}
+    function refreshPage() {
+        location.reload();
+    }
 
-// Toggle Sidebar
-function toggleSidebar() {
-    const sidebar = document.querySelector('.sidebar');
-    sidebar.classList.toggle('show');
-}
+    function toggleSidebar() {
+        const sidebar = document.querySelector('.sidebar');
+        sidebar.classList.toggle('show');
+    }
 </script>
 
-</body>
-</html>
+<?php require_once '../../includes/footer.php'; ?>

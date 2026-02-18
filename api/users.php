@@ -33,15 +33,16 @@ try {
             $params = [];
             
             // Filter by status
-            if (empty($status_filter) || $status_filter === '') {
+            if (empty($status_filter) || $status_filter === '' || $status_filter === 'active') {
                 // Default: แสดงเฉพาะผู้ใช้ที่ active
                 $where[] = "status = 'active'";
-            } elseif ($status_filter !== 'all') {
-                // กรองตาม status ที่เลือก (active หรือ inactive)
-                $where[] = "status = ?";
-                $params[] = $status_filter;
+            } elseif ($status_filter === 'inactive') {
+                // แสดงเฉพาะผู้ใช้ที่ไม่ได้ใช้งาน
+                $where[] = "status = 'inactive'";
+            } elseif ($status_filter === 'all') {
+                // ไม่ต้องกรอง status
+                // ไม่เพิ่มอะไรใน $where
             }
-            // ถ้า status_filter = 'all' ไม่ต้องกรอง status
             
             if (!empty($search)) {
                 $where[] = "(username LIKE ? OR email LIKE ? OR full_name LIKE ?)";

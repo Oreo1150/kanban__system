@@ -26,6 +26,10 @@ if (!isset($_GET['request_id']) || empty($_GET['request_id'])) {
 $request_id = intval($_GET['request_id']);
 
 try {
+    // รับการเชื่อมต่อฐานข้อมูล (PDO)
+    $database = new Database();
+    $db = $database->getConnection();
+
     // ดึงข้อมูลคำขอหลัก
     $sql = "
         SELECT 
@@ -48,21 +52,18 @@ try {
         LEFT JOIN products p ON pj.product_id = p.product_id
         LEFT JOIN users u1 ON mr.requested_by = u1.user_id
         LEFT JOIN users u2 ON mr.approved_by = u2.user_id
-        WHERE mr.request_id = ?
+        WHERE mr.request_id = :request_id
     ";
-    
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("i", $request_id);
-    $stmt->execute();
-    $request_result = $stmt->get_result();
-    
-    if ($request_result->num_rows === 0) {
+
+    $stmt = $db->prepare($sql);
+    $stmt->execute([':request_id' => $request_id]);
+    $request = $stmt->fetch();
+
+    if (!$request) {
         echo '<div class="alert alert-danger">ไม่พบข้อมูลคำขอ</div>';
         exit();
     }
-    
-    $request = $request_result->fetch_assoc();
-    
+
     // ดึงรายละเอียดวัสดุ
     $detail_sql = "
         SELECT 
@@ -74,17 +75,22 @@ try {
             m.unit,
             m.current_stock,
             m.min_stock,
-            m.location
+            m.location,
+            bd.card_color,
+            bd.quantity_per_card,
+            bd.quantity_per_unit
         FROM material_request_details mrd
         JOIN materials m ON mrd.material_id = m.material_id
-        WHERE mrd.request_id = ?
+        LEFT JOIN bom_detail bd ON bd.material_id = m.material_id AND bd.bom_id IN (
+            SELECT bh.bom_id FROM bom_header bh WHERE bh.product_id = :product_id AND bh.status = 'active'
+        )
+        WHERE mrd.request_id = :request_id
         ORDER BY m.material_name
     ";
-    
-    $detail_stmt = $conn->prepare($detail_sql);
-    $detail_stmt->bind_param("i", $request_id);
-    $detail_stmt->execute();
-    $details_result = $detail_stmt->get_result();
+
+    $detail_stmt = $db->prepare($detail_sql);
+    $detail_stmt->execute([':request_id' => $request_id, ':product_id' => $request['product_id']]);
+    $details = $detail_stmt->fetchAll();
     
     // กำหนดสี status
     $status_class = '';
@@ -196,13 +202,14 @@ try {
                                 <th>จำนวนที่ขอ</th>
                                 <th>สต็อกคงเหลือ</th>
                                 <th>สถานที่เก็บ</th>
+                                <th>การ์ด</th>
                                 <th>สถานะ</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php 
                             $total_items = 0;
-                            while ($detail = $details_result->fetch_assoc()): 
+                            foreach ($details as $detail):
                                 $total_items++;
                                 
                                 // ตรวจสอบสถานะสต็อก
@@ -223,6 +230,14 @@ try {
                                 $low_stock_warning = '';
                                 if ($detail['current_stock'] <= $detail['min_stock']) {
                                     $low_stock_warning = '<i class="fas fa-exclamation-triangle text-warning" title="สต็อกต่ำกว่าเกณฑ์"></i>';
+                                }
+                                
+                                $card_color = $detail['card_color'] ?? '#3498db';
+                                // Use quantity_per_card if present, otherwise fallback to quantity_per_unit (legacy/mis-saved values)
+                                $quantity_per_card = $detail['quantity_per_card'] ?? $detail['quantity_per_unit'] ?? 1;
+                                $total_cards = 0;
+                                if ($quantity_per_card > 0) {
+                                    $total_cards = (int) ceil($detail['quantity_requested'] / $quantity_per_card);
                                 }
                             ?>
                             <tr>
@@ -245,17 +260,27 @@ try {
                                     <span class="badge bg-secondary"><?= htmlspecialchars($detail['location'] ?? 'N/A') ?></span>
                                 </td>
                                 <td>
+                                    <div style="display: inline-block; text-align: center;">
+                                        <div style="width: 40px; height: 40px; margin: 0 auto; background-color: <?= htmlspecialchars($card_color) ?>; border: 2px solid #ddd; border-radius: 6px; display: flex; align-items: center; justify-content: center;" title="จำนวน/การ์ด: <?= $quantity_per_card ?> | การ์ดทั้งหมด: <?= $total_cards ?>">
+                                            <span style="color: white; font-weight: bold; text-shadow: 0 1px 1px rgba(0,0,0,0.3); font-size: 12px;"><?= $total_cards ?></span>
+                                        </div>
+                                        <div style="margin-top:6px; font-size:11px; color:#444;">
+                                            <small>1 ใบ = <?= htmlspecialchars($quantity_per_card) ?> <?= htmlspecialchars($detail['unit'] ?? '') ?></small>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
                                     <span class="badge bg-<?= $stock_class ?>"><?= $stock_status ?></span>
                                     <?php if ($detail['quantity_fulfilled'] > 0): ?>
                                         <br><small class="text-success">จ่ายแล้ว: <?= number_format($detail['quantity_fulfilled'], 2) ?></small>
                                     <?php endif; ?>
                                 </td>
                             </tr>
-                            <?php endwhile; ?>
+                            <?php endforeach; ?>
                         </tbody>
                         <tfoot class="table-light">
                             <tr>
-                                <th colspan="6">
+                                <th colspan="7">
                                     <strong>รวมทั้งหมด: <?= $total_items ?> รายการ</strong>
                                 </th>
                             </tr>
@@ -284,9 +309,8 @@ try {
                 
                 <?php
                 // ตรวจสอบรายการที่สต็อกไม่พอ
-                $details_result->data_seek(0); // รีเซ็ต cursor
                 $insufficient_items = [];
-                while ($detail = $details_result->fetch_assoc()) {
+                foreach ($details as $detail) {
                     if ($detail['current_stock'] < $detail['quantity_requested']) {
                         $insufficient_items[] = $detail['material_name'] . " (ต้องการ: {$detail['quantity_requested']}, คงเหลือ: {$detail['current_stock']})";
                     }

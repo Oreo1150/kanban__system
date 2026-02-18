@@ -22,10 +22,11 @@ try {
             $request_id = (int)$_GET['id'];
             
             $query = "SELECT mr.*, pj.job_number, pj.product_id, u.full_name as requested_by_name, 
-                             p.product_name
+                             p.product_name, u2.full_name as approved_by_name
                       FROM material_requests mr
                       LEFT JOIN production_jobs pj ON mr.job_id = pj.job_id
                       LEFT JOIN users u ON mr.requested_by = u.user_id
+                      LEFT JOIN users u2 ON mr.approved_by = u2.user_id
                       LEFT JOIN products p ON pj.product_id = p.product_id
                       WHERE mr.request_id = ?";
             $stmt = $db->prepare($query);
@@ -37,15 +38,46 @@ try {
             }
             
             // Get request details
-            $detailQuery = "SELECT mrd.*, m.part_code, m.material_name, m.unit, m.current_stock
-                           FROM material_request_details mrd
-                           LEFT JOIN materials m ON mrd.material_id = m.material_id
-                           WHERE mrd.request_id = ?";
+            // Some installs may not have optional columns (card_color, quantity_per_card, quantity_per_unit).
+            // Detect which columns exist and build select with NULL aliases when missing to avoid SQL errors.
+            // Build select list preferring stored detail values (mrd.*) then fallback to materials table
+            $baseCols = [
+                'm.part_code',
+                'm.material_name',
+                'm.unit',
+                'm.current_stock'
+            ];
+
+            $optional = ['card_color', 'quantity_per_card', 'quantity_per_unit'];
+            $cols = $baseCols;
+            foreach ($optional as $col) {
+                // Prefer mrd.<col> if present, otherwise fallback to m.<col>, otherwise NULL
+                $mrdHas = false;
+                $mHas = false;
+                try {
+                    $mrdCheck = $db->query("SHOW COLUMNS FROM material_request_details LIKE '" . $col . "'");
+                    if ($mrdCheck && $mrdCheck->rowCount() > 0) $mrdHas = true;
+                } catch (PDOException $e) { /* ignore */ }
+                try {
+                    $mCheck = $db->query("SHOW COLUMNS FROM materials LIKE '" . $col . "'");
+                    if ($mCheck && $mCheck->rowCount() > 0) $mHas = true;
+                } catch (PDOException $e) { /* ignore */ }
+
+                if ($mrdHas) {
+                    $cols[] = "COALESCE(mrd." . $col . ", m." . $col . ", NULL) AS " . $col;
+                } elseif ($mHas) {
+                    $cols[] = "m." . $col . " AS " . $col;
+                } else {
+                    $cols[] = "NULL AS " . $col;
+                }
+            }
+
+            $detailQuery = "SELECT mrd.*, " . implode(', ', $cols) . "\n                           FROM material_request_details mrd\n                           LEFT JOIN materials m ON mrd.material_id = m.material_id\n                           WHERE mrd.request_id = ?";
             $detailStmt = $db->prepare($detailQuery);
             $detailStmt->execute([$request_id]);
             $request['details'] = $detailStmt->fetchAll();
             
-            echo json_encode(['success' => true, 'data' => $request]);
+            echo json_encode(['success' => true, 'data' => $request, 'details' => $request['details']]);
             break;
             
         case 'approve':
@@ -164,10 +196,44 @@ try {
             $request_id = $db->lastInsertId();
             
             // Create request details
+            // If material_request_details has optional columns, insert values for consistency
+            $optionalCols = ['card_color','quantity_per_card','quantity_per_unit'];
+            $mrdCols = ['request_id','material_id','quantity_requested'];
+            $mrdPlaceholders = ['?','?','?'];
+            $extraColsExist = [];
+            foreach ($optionalCols as $col) {
+                try {
+                    $chk = $db->query("SHOW COLUMNS FROM material_request_details LIKE '" . $col . "'");
+                    if ($chk && $chk->rowCount() > 0) {
+                        $mrdCols[] = $col;
+                        $mrdPlaceholders[] = '?';
+                        $extraColsExist[] = $col;
+                    }
+                } catch (PDOException $e) { /* ignore */ }
+            }
+
+            $detailQuery = "INSERT INTO material_request_details (" . implode(', ', $mrdCols) . ") VALUES (" . implode(', ', $mrdPlaceholders) . ")";
+            $detailStmt = $db->prepare($detailQuery);
+
             foreach ($materials as $material) {
-                $detailQuery = "INSERT INTO material_request_details (request_id, material_id, quantity_requested) VALUES (?, ?, ?)";
-                $detailStmt = $db->prepare($detailQuery);
-                $detailStmt->execute([$request_id, $material['material_id'], $material['quantity']]);
+                $params = [$request_id, $material['material_id'], $material['quantity']];
+                // Try to attach optional values from the material object (from BOM) when available
+                foreach ($extraColsExist as $col) {
+                    $val = $material[$col] ?? $material['meta'][$col] ?? null;
+                    // fallback: if not provided, try to read from materials table via separate query (expensive but safe)
+                    if ($val === null) {
+                        try {
+                            $mStmt = $db->prepare("SELECT " . $col . " FROM materials WHERE material_id = ? LIMIT 1");
+                            $mStmt->execute([$material['material_id']]);
+                            $row = $mStmt->fetch();
+                            $val = $row[$col] ?? null;
+                        } catch (PDOException $e) {
+                            $val = null;
+                        }
+                    }
+                    $params[] = $val;
+                }
+                $detailStmt->execute($params);
             }
             
             $db->commit();

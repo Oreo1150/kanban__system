@@ -115,7 +115,7 @@ $materials = $db->query("
                                     <?php foreach ($products as $product): ?>
                                         <tr>
                                             <td><code class="bg-light px-2 py-1 rounded"><?= htmlspecialchars($product['product_code']) ?></code></td>
-                                            <td style="cursor:pointer;" onclick="viewBOM(<?= $product['product_id'] ?>)">
+                                            <td style="cursor:pointer;" data-action="view-bom" data-product-id="<?= $product['product_id'] ?>">
                                                 <strong><?= htmlspecialchars($product['product_name']) ?></strong>
                                             </td>
                                             <td>
@@ -136,13 +136,13 @@ $materials = $db->query("
                                                         </button>
                                                         <ul class="dropdown-menu">
                                                             <li>
-                                                                <a class="dropdown-item" href="#" onclick="event.preventDefault(); event.stopPropagation(); viewBOM(<?= $product['product_id'] ?>)">
+                                                                <a class="dropdown-item" href="#" data-action="view-bom" data-product-id="<?= $product['product_id'] ?>">
                                                                     <i class="fas fa-eye text-info me-2"></i>ดูรายละเอียด
                                                                 </a>
                                                             </li>
                                                             <?php if ($product['has_bom']): ?>
                                                             <li>
-                                                                <a class="dropdown-item" href="#" onclick="event.preventDefault(); event.stopPropagation(); editBOM(<?= $product['product_id'] ?>)">
+                                                                <a class="dropdown-item" href="#" data-action="edit-bom" data-product-id="<?= $product['product_id'] ?>">
                                                                     <i class="fas fa-edit text-warning me-2"></i>แก้ไข BOM
                                                                 </a>
                                                             </li>
@@ -156,13 +156,13 @@ $materials = $db->query("
                                                         </ul>
                                                     </div>
 
-                                                    <button class="btn btn-info btn-sm" onclick="event.stopPropagation(); viewBOM(<?= $product['product_id'] ?>)" title="ดู"><i class="fas fa-eye"></i></button>
+                                                    <button class="btn btn-info btn-sm" data-action="view-bom" data-product-id="<?= $product['product_id'] ?>" title="ดู"><i class="fas fa-eye"></i></button>
 
                                                     <?php if ($product['has_bom']): ?>
-                                                        <button class="btn btn-warning btn-sm" onclick="event.stopPropagation(); editBOM(<?= $product['product_id'] ?>)" title="แก้ไข"><i class="fas fa-edit"></i></button>
-                                                        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); confirmDeleteBOM(<?= $product['product_id'] ?>, '<?= htmlspecialchars($product['product_name'], ENT_QUOTES) ?>')" title="ลบ"><i class="fas fa-trash"></i></button>
+                                                        <button class="btn btn-warning btn-sm" data-action="edit-bom" data-product-id="<?= $product['product_id'] ?>" title="แก้ไข"><i class="fas fa-edit"></i></button>
+                                                        <button class="btn btn-danger btn-sm" data-action="delete-bom" data-product-id="<?= $product['product_id'] ?>" data-product-name="<?= htmlspecialchars($product['product_name'], ENT_QUOTES) ?>" title="ลบ"><i class="fas fa-trash"></i></button>
                                                     <?php else: ?>
-                                                        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); createBOMForProduct(<?= $product['product_id'] ?>, '<?= htmlspecialchars($product['product_name'], ENT_QUOTES) ?>', '<?= htmlspecialchars($product['product_code'], ENT_QUOTES) ?>')" title="สร้าง BOM"><i class="fas fa-plus"></i></button>
+                                                        <button class="btn btn-primary btn-sm" data-action="create-bom" data-product-id="<?= $product['product_id'] ?>" data-product-name="<?= htmlspecialchars($product['product_name'], ENT_QUOTES) ?>" data-product-code="<?= htmlspecialchars($product['product_code'], ENT_QUOTES) ?>" title="สร้าง BOM"><i class="fas fa-plus"></i></button>
                                                     <?php endif; ?>
                                                 </div>
                                             </td>
@@ -243,7 +243,7 @@ $materials = $db->query("
                                 </div>
                                 <div class="card-body">
                                     <div class="row">
-                                        <div class="col-md-6">
+                                        <div class="col-md-5">
                                             <label class="form-label">วัสดุ</label>
                                             <select class="form-select" id="selected_material">
                                                 <option value="">เลือกวัสดุ</option>
@@ -257,17 +257,25 @@ $materials = $db->query("
                                                 <?php endforeach; ?>
                                             </select>
                                         </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label">จำนวนต่อหน่วย</label>
+                                        <div class="col-md-2">
+                                            <label class="form-label">จำนวน/หน่วย</label>
                                             <input type="number" class="form-control" id="material_quantity" step="0.01" min="0" placeholder="0.00">
                                         </div>
                                         <div class="col-md-2">
+                                            <label class="form-label">สีการ์ด</label>
+                                            <input type="color" class="form-control form-control-color" id="card_color" value="#3498db" title="เลือกสีการ์ด">
+                                        </div>
+                                        <div class="col-md-2">
+                                            <label class="form-label">จำนวน/การ์ด</label>
+                                            <input type="number" class="form-control" id="quantity_per_card" min="1" value="1" placeholder="1">
+                                        </div>
+                                        <div class="col-md-1">
                                             <label class="form-label">&nbsp;</label>
-                                            <div class="d-flex gap-2">
-                                                <button type="button" class="btn btn-success" onclick="addMaterial()">
+                                            <div class="d-flex gap-1">
+                                                <button type="button" class="btn btn-success btn-sm" onclick="addMaterial()">
                                                     <i class="fas fa-check"></i>
                                                 </button>
-                                                <button type="button" class="btn btn-secondary" onclick="hideMaterialSelector()">
+                                                <button type="button" class="btn btn-secondary btn-sm" onclick="hideMaterialSelector()">
                                                     <i class="fas fa-times"></i>
                                                 </button>
                                             </div>
@@ -382,11 +390,15 @@ $materials = $db->query("
             document.getElementById('material-selector').style.display = 'none';
             document.getElementById('selected_material').value = '';
             document.getElementById('material_quantity').value = '';
+            document.getElementById('card_color').value = '#3498db';
+            document.getElementById('quantity_per_card').value = '1';
         }
         
         function addMaterial() {
             const materialSelect = document.getElementById('selected_material');
             const quantity = parseFloat(document.getElementById('material_quantity').value);
+            const cardColor = document.getElementById('card_color').value;
+            const quantityPerCard = parseInt(document.getElementById('quantity_per_card').value);
             
             if (!materialSelect.value) {
                 Swal.fire('กรุณาเลือกวัสดุ', '', 'warning');
@@ -395,6 +407,11 @@ $materials = $db->query("
             
             if (!quantity || quantity <= 0) {
                 Swal.fire('กรุณาระบุจำนวน', 'จำนวนต้องมากกว่า 0', 'warning');
+                return;
+            }
+            
+            if (!quantityPerCard || quantityPerCard <= 0) {
+                Swal.fire('กรุณาระบุจำนวนต่อการ์ด', 'จำนวนต้องมากกว่า 0', 'warning');
                 return;
             }
             
@@ -412,7 +429,9 @@ $materials = $db->query("
                 part_code: selectedOption.dataset.code,
                 material_name: selectedOption.dataset.name,
                 unit: selectedOption.dataset.unit,
-                quantity_per_unit: quantity
+                quantity_per_unit: quantity,
+                card_color: cardColor,
+                quantity_per_card: quantityPerCard
             };
             
             bomMaterials.push(material);
@@ -454,15 +473,15 @@ $materials = $db->query("
             bomMaterials.forEach((material, index) => {
                 html += `
                     <div class="material-row">
-                        <div class="row align-items-center">
+                        <div class="row align-items-start">
                             <div class="col-md-1 text-center">
                                 <strong>${index + 1}</strong>
                             </div>
-                            <div class="col-md-4">
+                            <div class="col-md-2">
                                 <strong>${material.part_code}</strong><br>
                                 <small class="text-muted">${material.material_name}</small>
                             </div>
-                            <div class="col-md-3">
+                            <div class="col-md-2">
                                 <div class="input-group">
                                     <input type="number" class="form-control" value="${material.quantity_per_unit}" 
                                            step="0.01" min="0"
@@ -470,13 +489,24 @@ $materials = $db->query("
                                     <span class="input-group-text">${material.unit}/ชิ้น</span>
                                 </div>
                             </div>
-                            <div class="col-md-3">
-                                <small class="text-muted">
-                                    ผลิต 100 ชิ้น ใช้ ${(material.quantity_per_unit * 100).toLocaleString()} ${material.unit}
-                                </small>
+                            <div class="col-md-2">
+                                <input type="color" class="form-control form-control-color" 
+                                       value="${material.card_color}" 
+                                       onchange="updateMaterialColor(${index}, this.value)"
+                                       style="height: 40px;">
+                                <small class="text-muted d-block mt-1">สีการ์ด</small>
                             </div>
-                            <div class="col-md-1 text-end">
-                                <button type="button" class="btn btn-danger btn-sm" onclick="removeMaterial(${index})">
+                            <div class="col-md-2">
+                                <input type="number" class="form-control" value="${material.quantity_per_card}" 
+                                       min="1" step="1"
+                                       onchange="updateMaterialCardQty(${index}, this.value)">
+                                <small class="text-muted d-block mt-1">อัน/ใบการ์ด</small>
+                            </div>
+                            <div class="col-md-2 text-center">
+                                <div style="width: 60px; height: 60px; background-color: ${material.card_color}; border: 2px solid #ddd; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin: 0 auto;">
+                                    <span style="color: white; font-weight: bold; text-shadow: 0 1px 1px rgba(0,0,0,0.3);">${material.quantity_per_card}</span>
+                                </div>
+                                <button type="button" class="btn btn-danger btn-sm mt-2" onclick="removeMaterial(${index})">
                                     <i class="fas fa-trash"></i>
                                 </button>
                             </div>
@@ -492,6 +522,19 @@ $materials = $db->query("
             const quantity = parseFloat(newValue);
             if (quantity > 0) {
                 bomMaterials[index].quantity_per_unit = quantity;
+                updateMaterialsList();
+            }
+        }
+        
+        function updateMaterialColor(index, newColor) {
+            bomMaterials[index].card_color = newColor;
+            updateMaterialsList();
+        }
+        
+        function updateMaterialCardQty(index, newValue) {
+            const qty = parseInt(newValue);
+            if (qty > 0) {
+                bomMaterials[index].quantity_per_card = qty;
                 updateMaterialsList();
             }
         }
@@ -537,20 +580,39 @@ $materials = $db->query("
                 method: 'POST',
                 body: formData
             })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
             .then(data => {
+                console.log('API Response:', data);
                 if (data.success) {
-                    Swal.fire('สำเร็จ', data.message, 'success').then(() => {
+                    Swal.fire({
+                        title: 'สำเร็จ',
+                        text: data.message,
+                        icon: 'success',
+                        allowOutsideClick: false,
+                        didOpen: () => {
+                            // ลบ DataTable instance ก่อน reload
+                            if ($.fn.dataTable.isDataTable('#productsBOMTable')) {
+                                $('#productsBOMTable').DataTable().destroy();
+                            }
+                        }
+                    }).then((result) => {
                         bootstrap.Modal.getInstance(document.getElementById('bomModal')).hide();
-                        location.reload();
+                        setTimeout(() => {
+                            location.reload();
+                        }, 300);
                     });
                 } else {
-                    Swal.fire('เกิดข้อผิดพลาด', data.message, 'error');
+                    Swal.fire('เกิดข้อผิดพลาด', data.message || 'ไม่สามารถบันทึกข้อมูลได้', 'error');
                 }
             })
             .catch(error => {
-                console.error('Error:', error);
-                Swal.fire('เกิดข้อผิดพลาด', 'ไม่สามารถบันทึกข้อมูลได้', 'error');
+                console.error('Fetch Error:', error);
+                Swal.fire('เกิดข้อผิดพลาด', error.message || 'ไม่สามารถบันทึกข้อมูลได้', 'error');
             });
         });
         
@@ -601,7 +663,9 @@ $materials = $db->query("
                                 <th>#</th>
                                 <th>รหัสวัสดุ</th>
                                 <th>ชื่อวัสดุ</th>
-                                <th>จำนวนต่อหน่วย</th>
+                                <th>จำนวน/หน่วย</th>
+                                <th>สีการ์ด</th>
+                                <th>จำนวน/การ์ด</th>
                                 <th>สต็อกปัจจุบัน</th>
                             </tr>
                         </thead>
@@ -609,12 +673,18 @@ $materials = $db->query("
             `;
             
             bom.details.forEach((detail, index) => {
+                const cardColor = detail.card_color || '#3498db';
+                const quantityPerCard = detail.quantity_per_card || 1;
                 detailsHtml += `
                     <tr>
                         <td>${index + 1}</td>
                         <td><strong>${detail.part_code}</strong></td>
                         <td>${detail.material_name}</td>
                         <td>${detail.quantity_per_unit} ${detail.unit}/ชิ้น</td>
+                        <td>
+                            <div style="display: inline-block; width: 40px; height: 40px; background-color: ${cardColor}; border: 2px solid #ddd; border-radius: 6px;" title="${cardColor}"></div>
+                        </td>
+                        <td><span class="badge" style="background-color: ${cardColor}; color: white;">${quantityPerCard}</span></td>
                         <td>
                             <span class="badge ${detail.current_stock > 0 ? 'bg-success' : 'bg-danger'}">
                                 ${detail.current_stock.toLocaleString()} ${detail.unit}
@@ -635,13 +705,13 @@ $materials = $db->query("
             // Setup edit button
             document.getElementById('editBOMBtn').onclick = () => {
                 bootstrap.Modal.getInstance(document.getElementById('viewBOMModal')).hide();
-                editBOM(productId);
+                editBOM(bom.product_id);
             };
             
             // Setup delete button
             document.getElementById('deleteBOMBtn').onclick = () => {
                 bootstrap.Modal.getInstance(document.getElementById('viewBOMModal')).hide();
-                confirmDeleteBOM(productId, bom.product_name);
+                confirmDeleteBOM(bom.product_id, bom.product_name);
             };
         }
         
@@ -671,7 +741,9 @@ $materials = $db->query("
                             part_code: detail.part_code,
                             material_name: detail.material_name,
                             unit: detail.unit,
-                            quantity_per_unit: parseFloat(detail.quantity_per_unit)
+                            quantity_per_unit: parseFloat(detail.quantity_per_unit),
+                            card_color: detail.card_color || '#3498db',
+                            quantity_per_card: parseInt(detail.quantity_per_card) || 1
                         }));
                         
                         updateMaterialsList();
@@ -897,6 +969,38 @@ $materials = $db->query("
                     ]
                 });
             }
+            
+            // Use jQuery event delegation for action buttons (works after DataTable re-render)
+            $(document).on('click', '[data-action="view-bom"]', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                const productId = $(this).attr('data-product-id');
+                viewBOM(productId);
+            });
+            
+            $(document).on('click', '[data-action="edit-bom"]', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                const productId = $(this).attr('data-product-id');
+                editBOM(productId);
+            });
+            
+            $(document).on('click', '[data-action="delete-bom"]', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                const productId = $(this).attr('data-product-id');
+                const productName = $(this).attr('data-product-name');
+                confirmDeleteBOM(productId, productName);
+            });
+            
+            $(document).on('click', '[data-action="create-bom"]', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                const productId = $(this).attr('data-product-id');
+                const productName = $(this).attr('data-product-name');
+                const productCode = $(this).attr('data-product-code');
+                createBOMForProduct(productId, productName, productCode);
+            });
         });
     </script>
 

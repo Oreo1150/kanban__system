@@ -21,14 +21,28 @@ try {
         case 'create':
             checkRole(['planning', 'admin']);
             
+            // Normalize assigned_to: treat missing/0 as NULL to avoid FK violation
+            $raw_assigned = $_POST['assigned_to'] ?? null;
+            $assigned_to = null;
+            if ($raw_assigned !== null && is_numeric($raw_assigned)) {
+                $assigned_to = (int)$raw_assigned;
+                if ($assigned_to <= 0) $assigned_to = null;
+            }
+
             $data = [
                 'product_id' => (int)($_POST['product_id'] ?? 0),
                 'quantity_planned' => (int)($_POST['quantity_planned'] ?? 0),
                 'start_date' => $_POST['start_date'] ?? null,
                 'end_date' => $_POST['end_date'] ?? null,
-                'assigned_to' => (int)($_POST['assigned_to'] ?? 0),
+                'assigned_to' => $assigned_to,
                 'notes' => sanitize($_POST['notes'] ?? '')
             ];
+
+            // Capture free-text assigned name (if provided) and add to notes when numeric assigned_to was not provided
+            $assigned_to_name = sanitize($_POST['assigned_to_name'] ?? '');
+            if ($data['assigned_to'] === null && $assigned_to_name !== '') {
+                $data['notes'] .= "\nAssigned to: " . $assigned_to_name;
+            }
             
             if ($data['quantity_planned'] <= 0) {
                 throw new Exception('จำนวนที่วางแผนต้องมากกว่า 0');
@@ -112,14 +126,29 @@ try {
             $job_number = $prefix . sprintf('%04d', $nextSeq);
 
             // Build insert fields conditionally (if production_jobs has customer_id column)
-            $fields = ['job_number','product_id','quantity_planned','start_date','end_date','assigned_to','notes','created_by'];
-            $params = [$job_number, $data['product_id'], $data['quantity_planned'], $data['start_date'], $data['end_date'], $data['assigned_to'], $data['notes'], $_SESSION['user_id']];
+            // Note: we only include assigned_to when it's provided (not NULL) to avoid FK failures
+            $fields = ['job_number','product_id','quantity_planned','start_date','end_date','notes','created_by'];
+            $params = [$job_number, $data['product_id'], $data['quantity_planned'], $data['start_date'], $data['end_date'], $data['notes'], $_SESSION['user_id']];
 
             try {
                 $colCheck = $db->query("SHOW COLUMNS FROM production_jobs LIKE 'customer_id'");
                 if ($colCheck && $colCheck->rowCount() > 0 && $customer_id !== null) {
                     $fields[] = 'customer_id';
                     $params[] = $customer_id;
+                }
+
+                // Add assigned_to only when not null
+                if ($data['assigned_to'] !== null) {
+                    $fields[] = 'assigned_to';
+                    $params[] = $data['assigned_to'];
+                }
+
+                // If the production_jobs table has an assigned_to_name column, save free-text assignee
+                $colCheck2 = $db->query("SHOW COLUMNS FROM production_jobs LIKE 'assigned_to_name'");
+                $assigned_to_name = sanitize($_POST['assigned_to_name'] ?? '');
+                if ($colCheck2 && $colCheck2->rowCount() > 0 && $assigned_to_name !== '') {
+                    $fields[] = 'assigned_to_name';
+                    $params[] = $assigned_to_name;
                 }
             } catch (PDOException $e) {
                 // ignore, table might not exist or no permission
@@ -133,7 +162,7 @@ try {
             $job_id = $db->lastInsertId();
             
             // Calculate required materials from BOM
-            $bomQuery = "SELECT bd.material_id, bd.quantity_per_unit, m.material_name, m.part_code
+            $bomQuery = "SELECT bd.material_id, bd.quantity_per_unit, bd.card_color, bd.quantity_per_card, m.material_name, m.part_code
                         FROM bom_header bh
                         JOIN bom_detail bd ON bh.bom_id = bd.bom_id
                         JOIN materials m ON bd.material_id = m.material_id
@@ -145,12 +174,16 @@ try {
             $required_materials = [];
             foreach ($bomItems as $item) {
                 $required_quantity = $item['quantity_per_unit'] * $data['quantity_planned'];
+                $card_color = $item['card_color'] ?? '#3498db';
+                $quantity_per_card = $item['quantity_per_card'] ?? 1;
                 $required_materials[] = [
                     'material_id' => $item['material_id'],
                     'part_code' => $item['part_code'],
                     'material_name' => $item['material_name'],
                     'quantity_per_unit' => $item['quantity_per_unit'],
-                    'required_quantity' => $required_quantity
+                    'required_quantity' => $required_quantity,
+                    'card_color' => $card_color,
+                    'quantity_per_card' => (int)$quantity_per_card
                 ];
             }
             
@@ -180,7 +213,8 @@ try {
             
             // Role-based filtering
             if ($role === 'production') {
-                $where[] = "pj.assigned_to = ?";
+                // Show jobs assigned to this user OR unassigned jobs (assigned_to IS NULL)
+                $where[] = "(pj.assigned_to = ? OR pj.assigned_to IS NULL)";
                 $params[] = $_SESSION['user_id'];
             }
             
@@ -203,12 +237,12 @@ try {
             $total = $countStmt->fetch()['total'];
             
             // Get jobs
-            $query = "SELECT pj.*, p.product_name, p.product_code, 
-                             u1.full_name as created_by_name, u2.full_name as assigned_to_name
+                 $query = "SELECT pj.*, p.product_name, p.product_code, 
+                         u1.full_name as created_by_name, u2.full_name as assigned_user_name
                       FROM production_jobs pj
                       LEFT JOIN products p ON pj.product_id = p.product_id
                       LEFT JOIN users u1 ON pj.created_by = u1.user_id
-                      LEFT JOIN users u2 ON pj.assigned_to = u2.user_id
+                     LEFT JOIN users u2 ON pj.assigned_to = u2.user_id
                       WHERE $whereClause
                       ORDER BY pj.created_at DESC
                       LIMIT $limit OFFSET $offset";
@@ -266,6 +300,58 @@ try {
             }
             
             echo json_encode(['success' => true, 'message' => 'อัพเดทสถานะงานสำเร็จ']);
+            break;
+            
+        case 'get_detail':
+            $job_id = (int)($_GET['job_id'] ?? 0);
+            
+            if (!$job_id) {
+                throw new Exception('กรุณาระบุ Job ID');
+            }
+            
+            $query = "
+                  SELECT pj.*, 
+                      p.product_name, p.product_code,
+                      u1.full_name as created_by_name,
+                      u2.full_name as assigned_user_name
+                FROM production_jobs pj
+                LEFT JOIN products p ON pj.product_id = p.product_id
+                LEFT JOIN users u1 ON pj.created_by = u1.user_id
+                  LEFT JOIN users u2 ON pj.assigned_to = u2.user_id
+                WHERE pj.job_id = ?
+            ";
+            
+            $stmt = $db->prepare($query);
+            $stmt->execute([$job_id]);
+            $job = $stmt->fetch();
+            
+            if (!$job) {
+                throw new Exception('ไม่พบงานที่ระบุ');
+            }
+            
+            // ดึงวัสดุที่ต้องใช้
+            $materials_query = "
+                SELECT bd.*, m.part_code, m.material_name, m.unit
+                FROM bom_detail bd
+                JOIN bom_header bh ON bd.bom_id = bh.bom_id
+                JOIN materials m ON bd.material_id = m.material_id
+                WHERE bh.product_id = ? AND bh.status = 'active'
+                ORDER BY m.part_code
+            ";
+            
+            $stmt = $db->prepare($materials_query);
+            $stmt->execute([$job['product_id']]);
+            $materials = $stmt->fetchAll();
+            
+            // คำนวณจำนวนวัสดุที่ต้องใช้
+            foreach ($materials as &$material) {
+                $material['required_quantity'] = $material['quantity_per_unit'] * $job['quantity_planned'];
+                $material['card_color'] = $material['card_color'] ?? '#3498db';
+            }
+            
+            $job['required_materials'] = $materials;
+            
+            echo json_encode(['success' => true, 'data' => $job]);
             break;
             
         default:

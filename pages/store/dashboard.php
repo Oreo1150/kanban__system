@@ -122,17 +122,12 @@ $stock_levels = $db->query("
                         <div class="card-body">
                             <div class="row">
                                 <div class="col-md-3 mb-3">
-                                    <a href="qr-scanner.php" class="btn btn-primary btn-lg w-100">
-                                        <i class="fas fa-qrcode fa-2x d-block mb-2"></i>
-                                        สแกน QR Code
+                                    <a href="material-requests.php" class="btn btn-primary btn-lg w-100">
+                                        <i class="fas fa-file-alt fa-2x d-block mb-2"></i>
+                                        คำขอเบิกวัสดุ
                                     </a>
                                 </div>
-                                <div class="col-md-3 mb-3">
-                                    <a href="material-in.php" class="btn btn-success btn-lg w-100">
-                                        <i class="fas fa-arrow-down fa-2x d-block mb-2"></i>
-                                        รับวัสดุเข้า
-                                    </a>
-                                </div>
+                                <!-- 'รับวัสดุเข้า' action removed per request -->
                                 <div class="col-md-3 mb-3">
                                     <a href="material-out.php" class="btn btn-warning btn-lg w-100">
                                         <i class="fas fa-arrow-up fa-2x d-block mb-2"></i>

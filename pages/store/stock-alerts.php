@@ -16,76 +16,113 @@ $database = new Database();
 $db = $database->getConnection();
 
 // ดึงการแจ้งเตือนที่ยังไม่ได้จัดการ
-$active_alerts = $db->query("
-    SELECT 
-        sa.*,
-        m.part_code,
-        m.material_name,
-        m.unit,
-        m.current_stock,
-        m.min_stock,
-        m.max_stock,
-        m.location,
-        COALESCE(pr.pending_quantity, 0) as pending_pr_quantity,
-        pr.pr_id,
-        pr.status as pr_status
-    FROM stock_alerts sa
-    JOIN materials m ON sa.material_id = m.material_id
-    LEFT JOIN (
-        SELECT material_id, 
-               SUM(quantity_requested) as pending_quantity,
-               GROUP_CONCAT(pr_id) as pr_id,
-               GROUP_CONCAT(status) as status
-        FROM purchase_requests 
-        WHERE status IN ('pending', 'approved', 'ordered')
-        GROUP BY material_id
-    ) pr ON m.material_id = pr.material_id
-    WHERE sa.status = 'active'
-    AND m.status = 'active'
-    ORDER BY 
-        CASE sa.urgency 
-            WHEN 'urgent' THEN 1 
-            WHEN 'high' THEN 2 
-            ELSE 3 
-        END,
-        sa.created_at DESC
-")->fetchAll();
+// Check if 'urgency' and 'created_at' columns exist on stock_alerts
+$has_sa_urgency = false;
+$has_sa_created = false;
+try {
+    $colCheck = $db->query("SHOW COLUMNS FROM stock_alerts LIKE 'urgency'");
+    $has_sa_urgency = $colCheck && $colCheck->rowCount() > 0;
+} catch (PDOException $e) {
+    $has_sa_urgency = false;
+}
+try {
+    $colCheck2 = $db->query("SHOW COLUMNS FROM stock_alerts LIKE 'created_at'");
+    $has_sa_created = $colCheck2 && $colCheck2->rowCount() > 0;
+} catch (PDOException $e) {
+    $has_sa_created = false;
+}
+
+// find a fallback column to order by if created_at missing
+$sa_fallback_order_col = 'sa.material_id';
+foreach (['stock_alert_id','id','alert_id','material_id'] as $c) {
+    try {
+        $chk = $db->query("SHOW COLUMNS FROM stock_alerts LIKE '" . $c . "'");
+        if ($chk && $chk->rowCount() > 0) { $sa_fallback_order_col = 'sa.' . $c; break; }
+    } catch (PDOException $e) { }
+}
+
+if ($has_sa_urgency && $has_sa_created) {
+    $activeAlertsOrder = "ORDER BY \n        CASE sa.urgency \n            WHEN 'urgent' THEN 1 \n            WHEN 'high' THEN 2 \n            ELSE 3 \n        END,\n        sa.created_at DESC";
+} elseif ($has_sa_urgency) {
+    $activeAlertsOrder = "ORDER BY \n        CASE sa.urgency \n            WHEN 'urgent' THEN 1 \n            WHEN 'high' THEN 2 \n            ELSE 3 \n        END,\n        " . $sa_fallback_order_col . " DESC";
+} elseif ($has_sa_created) {
+    $activeAlertsOrder = "ORDER BY sa.created_at DESC";
+} else {
+    $activeAlertsOrder = "ORDER BY " . $sa_fallback_order_col . " DESC";
+}
+
+$active_alerts = $db->query(
+    "SELECT \n        sa.*,\n        m.part_code,\n        m.material_name,\n        m.unit,\n        m.current_stock,\n        m.min_stock,\n        m.max_stock,\n        m.location,\n        COALESCE(pr.pending_quantity, 0) as pending_pr_quantity,\n        pr.pr_id,\n        pr.status as pr_status\n    FROM stock_alerts sa\n    JOIN materials m ON sa.material_id = m.material_id\n    LEFT JOIN (\n        SELECT material_id, \n               SUM(quantity_requested) as pending_quantity,\n               GROUP_CONCAT(pr_id) as pr_id,\n               GROUP_CONCAT(status) as status\n        FROM purchase_requests \n        WHERE status IN ('pending', 'approved', 'ordered')\n        GROUP BY material_id\n    ) pr ON m.material_id = pr.material_id\n    WHERE sa.status = 'active'\n    AND m.status = 'active'\n    " . $activeAlertsOrder
+)->fetchAll();
 
 // ดึง PR Suggestions
-$pr_suggestions = $db->query("
-    SELECT 
-        ps.*,
-        m.part_code,
-        m.material_name,
-        m.unit,
-        m.current_stock,
-        m.min_stock,
-        m.max_stock
-    FROM pr_suggestions ps
-    JOIN materials m ON ps.material_id = m.material_id
-    WHERE ps.status = 'pending'
-    AND m.status = 'active'
-    ORDER BY 
-        CASE ps.urgency 
-            WHEN 'urgent' THEN 1 
-            WHEN 'high' THEN 2 
-            ELSE 3 
-        END,
-        ps.created_at DESC
-    LIMIT 20
-")->fetchAll();
+// Check if 'urgency' and 'created_at' exist on pr_suggestions
+$has_ps_urgency = false;
+$has_ps_created = false;
+try {
+    $colCheck3 = $db->query("SHOW COLUMNS FROM pr_suggestions LIKE 'urgency'");
+    $has_ps_urgency = $colCheck3 && $colCheck3->rowCount() > 0;
+} catch (PDOException $e) { $has_ps_urgency = false; }
+try {
+    $colCheck4 = $db->query("SHOW COLUMNS FROM pr_suggestions LIKE 'created_at'");
+    $has_ps_created = $colCheck4 && $colCheck4->rowCount() > 0;
+} catch (PDOException $e) { $has_ps_created = false; }
+
+$ps_fallback_order_col = 'ps.material_id';
+foreach (['pr_suggestion_id','id','material_id'] as $c) {
+    try {
+        $chk = $db->query("SHOW COLUMNS FROM pr_suggestions LIKE '" . $c . "'");
+        if ($chk && $chk->rowCount() > 0) { $ps_fallback_order_col = 'ps.' . $c; break; }
+    } catch (PDOException $e) { }
+}
+
+if ($has_ps_urgency && $has_ps_created) {
+    $psOrder = "ORDER BY \n        CASE ps.urgency \n            WHEN 'urgent' THEN 1 \n            WHEN 'high' THEN 2 \n            ELSE 3 \n        END,\n        ps.created_at DESC";
+} elseif ($has_ps_urgency) {
+    $psOrder = "ORDER BY \n        CASE ps.urgency \n            WHEN 'urgent' THEN 1 \n            WHEN 'high' THEN 2 \n            ELSE 3 \n        END,\n        " . $ps_fallback_order_col . " DESC";
+} elseif ($has_ps_created) {
+    $psOrder = "ORDER BY ps.created_at DESC";
+} else {
+    $psOrder = "ORDER BY " . $ps_fallback_order_col . " DESC";
+}
+
+// Check if pr_suggestions table exists before querying
+$pr_suggestions = [];
+$has_pr_suggestions_table = false;
+try {
+    $tblCheck = $db->query("SHOW TABLES LIKE 'pr_suggestions'");
+    $has_pr_suggestions_table = $tblCheck && $tblCheck->rowCount() > 0;
+} catch (PDOException $e) {
+    $has_pr_suggestions_table = false;
+}
+
+if ($has_pr_suggestions_table) {
+    $pr_suggestions = $db->query(
+        "SELECT \n        ps.*,\n        m.part_code,\n        m.material_name,\n        m.unit,\n        m.current_stock,\n        m.min_stock,\n        m.max_stock\n    FROM pr_suggestions ps\n    JOIN materials m ON ps.material_id = m.material_id\n    WHERE ps.status = 'pending'\n    AND m.status = 'active'\n    " . $psOrder . "\n    LIMIT 20"
+    )->fetchAll();
+}
 
 // สถิติ
-$stats = $db->query("
-    SELECT 
-        COUNT(DISTINCT sa.material_id) as total_alerts,
-        SUM(CASE WHEN sa.urgency = 'urgent' THEN 1 ELSE 0 END) as urgent_count,
-        SUM(CASE WHEN sa.urgency = 'high' THEN 1 ELSE 0 END) as high_count,
-        COUNT(DISTINCT ps.pr_suggestion_id) as pending_suggestions
-    FROM stock_alerts sa
-    LEFT JOIN pr_suggestions ps ON sa.material_id = ps.material_id AND ps.status = 'pending'
-    WHERE sa.status = 'active'
-")->fetch();
+$stats = ['total_alerts' => 0, 'urgent_count' => 0, 'high_count' => 0, 'pending_suggestions' => 0];
+try {
+    $statsSelect = "SELECT COUNT(DISTINCT sa.material_id) as total_alerts, ";
+    if ($has_sa_urgency) {
+        $statsSelect .= "SUM(CASE WHEN sa.urgency = 'urgent' THEN 1 ELSE 0 END) as urgent_count, ";
+        $statsSelect .= "SUM(CASE WHEN sa.urgency = 'high' THEN 1 ELSE 0 END) as high_count, ";
+    } else {
+        $statsSelect .= "0 as urgent_count, 0 as high_count, ";
+    }
+    if ($has_pr_suggestions_table) {
+        $statsSelect .= "COUNT(DISTINCT ps.pr_suggestion_id) as pending_suggestions ";
+        $statsSelect .= "FROM stock_alerts sa LEFT JOIN pr_suggestions ps ON sa.material_id = ps.material_id AND ps.status = 'pending' WHERE sa.status = 'active'";
+    } else {
+        $statsSelect .= "0 as pending_suggestions ";
+        $statsSelect .= "FROM stock_alerts sa WHERE sa.status = 'active'";
+    }
+    $stats = $db->query($statsSelect)->fetch();
+} catch (PDOException $e) {
+    // keep defaults
+}
 ?>
 
 <style>

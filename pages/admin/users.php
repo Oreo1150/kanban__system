@@ -395,7 +395,14 @@ $stats = $db->query("
                 serverSide: false,
                 ajax: {
                     url: '../../api/users.php?action=get_all',
-                    dataSrc: 'users'
+                    dataSrc: 'users',
+                    data: function(d) {
+                        return {
+                            role: document.getElementById('filterRole').value,
+                            status: document.getElementById('filterStatus').value,
+                            search: document.getElementById('searchUser').value
+                        };
+                    }
                 },
                 columns: [
                     {
@@ -860,13 +867,8 @@ $stats = $db->query("
         }
         
         function filterUsers() {
-            const role = document.getElementById('filterRole').value;
-            const status = document.getElementById('filterStatus').value;
-            const search = document.getElementById('searchUser').value;
-            
-            usersTable.column(4).search(role).draw();
-            usersTable.column(5).search(status).draw();
-            usersTable.search(search).draw();
+            // reload data from API with current filters
+            usersTable.ajax.reload(null, false);
         }
         
         function showRoleDistribution() {
